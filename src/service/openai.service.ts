@@ -16,7 +16,7 @@ export class OpenaiService {
       {
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'system', content: 'You are a helpful georgian chatbot assistant, you only speak georgian and help georgian people, you work for company called drouli and to make purchases you ask people for which product they want and their phone number address if they dont give you you dont finish purcheses.' },
           { role: 'user', content: userText },
         ],
         temperature: 0.7,
