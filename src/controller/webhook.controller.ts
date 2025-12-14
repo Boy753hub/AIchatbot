@@ -1,14 +1,17 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
+  HttpStatus,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import axios from 'axios';
+import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
 
 @Controller('webhook')
@@ -21,11 +24,12 @@ export class WebhookController {
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
+    @Res() res: express.Response,
   ) {
     if (mode === 'subscribe' && token === process.env.FB_VERIFY_TOKEN) {
-      return challenge;
+      return res.status(HttpStatus.OK).send(challenge); // send plain text
     }
-    throw new ForbiddenException();
+    return res.sendStatus(HttpStatus.FORBIDDEN);
   }
 
   // Incoming messages
