@@ -47,31 +47,23 @@ export class WebhookController {
   }
   // Incoming messages
   @Post()
-  async handleMessage(@Body() body: any) {
-    // Always ACK quickly
-    // (Nest will return 201 by default on POST unless you override; we’ll just return a string)
-    const entries = body.entry ?? [];
+  handleMessage(@Body() body: any) {
+    // Respond immediately
+    this.processMessage(body).catch(console.error);
+    return 'EVENT_RECEIVED';
+  }
 
-    for (const entry of entries) {
-      for (const messaging of entry.messaging ?? []) {
-        // Ignore echoes and non-text
-        if (messaging.message?.is_echo) continue;
-        const text = messaging.message?.text;
-        if (!text) continue;
+  private async processMessage(body: any) {
+    for (const entry of body.entry || []) {
+      for (const messaging of entry.messaging || []) {
+        if (!messaging.message?.text) continue;
 
-        const senderId = messaging.sender?.id;
-        if (!senderId) continue;
+        const senderId = messaging.sender.id;
+        const userText = messaging.message.text;
 
-        try {
-          const aiReply = await this.aiService.getCompletion(text);
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          await this.sendMessage(senderId, aiReply || '…');
-        } catch (e) {
-          console.error('Handle message failed:', e);
-        }
+        const aiReply = await this.aiService.getCompletion(userText);
+        await this.sendMessage(senderId, aiReply);
       }
     }
-
-    return 'EVENT_RECEIVED';
   }
 }
