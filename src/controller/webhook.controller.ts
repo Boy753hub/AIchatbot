@@ -31,29 +31,47 @@ export class WebhookController {
     }
     return res.sendStatus(HttpStatus.FORBIDDEN);
   }
+  async sendMessage(senderId: string, text: string) {
+    const url = `https://graph.facebook.com/v24.0/me/messages?access_token=${process.env.FB_PAGE_TOKEN}`;
 
+    try {
+      await axios.post(url, {
+        recipient: { id: senderId },
+        messaging_type: 'RESPONSE',
+        message: { text },
+      });
+    } catch (error: any) {
+      console.error('FB send error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
   // Incoming messages
   @Post()
   async handleMessage(@Body() body: any) {
-    const entry = body.entry?.[0];
-    const messaging = entry?.messaging?.[0];
+    // Always ACK quickly
+    // (Nest will return 201 by default on POST unless you override; we’ll just return a string)
+    const entries = body.entry ?? [];
 
-    if (!messaging?.message?.text) return;
+    for (const entry of entries) {
+      for (const messaging of entry.messaging ?? []) {
+        // Ignore echoes and non-text
+        if (messaging.message?.is_echo) continue;
+        const text = messaging.message?.text;
+        if (!text) continue;
 
-    const senderId = messaging.sender.id;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const userText = messaging.message.text;
+        const senderId = messaging.sender?.id;
+        if (!senderId) continue;
 
-    const aiReply = await this.aiService.getCompletion(userText);
-    await this.sendMessage(senderId, aiReply);
-  }
+        try {
+          const aiReply = await this.aiService.getCompletion(text);
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          await this.sendMessage(senderId, aiReply || '…');
+        } catch (e) {
+          console.error('Handle message failed:', e);
+        }
+      }
+    }
 
-  async sendMessage(senderId: string, text: string) {
-    const url = `https://graph.facebook.com/v18.0/me/messages?access_token=${process.env.FB_PAGE_TOKEN}`;
-
-    await axios.post(url, {
-      recipient: { id: senderId },
-      message: { text },
-    });
+    return 'EVENT_RECEIVED';
   }
 }

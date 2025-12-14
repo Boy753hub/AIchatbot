@@ -8,7 +8,7 @@ import * as process from 'process';
 @Injectable()
 export class OpenaiService {
   private readonly OPENAI_URL = 'https://api.openai.com/v1/responses';
-  private readonly API_KEY = process.env.OPENAI_API_KEY;
+  private readonly API_KEY = process.env.OPENAI_API_KEY!;
 
   async getCompletion(prompt: string): Promise<string> {
     const headers = {
@@ -18,27 +18,19 @@ export class OpenaiService {
 
     const body = {
       model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful assistant.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
+      input: [
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: prompt },
       ],
     };
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-      const response = await axios.post(this.OPENAI_URL, body, {
-        headers: headers,
-      });
-      return response.data.choices[0].message.content;
-    } catch (error) {
-      console.error('Error calling OpenAI API:', error);
-      throw new Error('Failed to get completion from OpenAI');
+      const response = await axios.post(this.OPENAI_URL, body, { headers });
+      return response.data.output_text ?? '';
+    } catch (error: any) {
+      console.error('OpenAI error:', error.response?.data || error.message);
+      throw error;
     }
   }
 }
