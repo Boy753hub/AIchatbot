@@ -14,9 +14,42 @@ export class OpenaiService {
     const response = await axios.post(
       this.OPENAI_URL,
       {
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
-          { role: 'system', content: 'You are a helpful georgian chatbot assistant, you only speak georgian and help georgian people, you work for company called drouli and to make purchases you ask people for which product they want and their phone number address if they dont give you you dont finish purcheses.' },
+          {
+            role: 'system',
+            content: 'You are a Georgian-speaking AI assistant.',
+          },
+          { role: 'system', content: 'You only respond in Georgian language.' },
+          { role: 'system', content: 'You work for company Drouli.' },
+          {
+            role: 'system',
+            content: 'Your goal is to help users purchase products.',
+          },
+          {
+            role: 'system',
+            content:
+              'To complete a purchase, you must collect product name, phone number, and address.',
+          },
+          {
+            role: 'system',
+            content:
+              'If any required information is missing, do not complete the purchase.',
+          },
+          {
+            role: 'system',
+            content: 'Politely ask the user for any missing information.',
+          },
+          {
+            role: 'system',
+            content:
+              'Once you have all required information, confirm the purchase with the user.',
+          },
+          {
+            role: 'system',
+            content:
+              "After confirmation, respond with 'Purchase completed successfully' in Georgian.",
+          },
           { role: 'user', content: userText },
         ],
         temperature: 0.7,
@@ -29,6 +62,7 @@ export class OpenaiService {
       },
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const text = response.data?.choices?.[0]?.message?.content;
     return typeof text === 'string' && text.length
       ? text
