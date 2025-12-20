@@ -14,10 +14,7 @@ import { ConfigModule } from '@nestjs/config';
     }),
 
     // ✅ NOW MongoDB can read process.env.MONGO_URL
-    MongooseModule.forRoot(
-      process.env.MONGO_URL! ??
-        'mongodb+srv://tskhomelidzel_db_user:Zuzunaguguna123%21@cluster0.oj5otsw.mongodb.net/chatbot',
-    ),
+    MongooseModule.forRoot(process.env.MONGO_URL!),
 
     MemoryModule,
   ],
