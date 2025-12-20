@@ -16,10 +16,17 @@ import {
 import axios from 'axios';
 import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
+import { MemoryService } from 'src/memory/memory.service'; // ✅ adjust path if needed
+
+type ChatRole = 'system' | 'user' | 'assistant';
+type ChatMessage = { role: ChatRole; content: string };
 
 @Controller('webhook')
 export class WebhookController {
-  constructor(private readonly aiService: OpenaiService) {}
+  constructor(
+    private readonly aiService: OpenaiService,
+    private readonly memoryService: MemoryService, // ✅ add this
+  ) {}
 
   // Facebook verification (GET)
   @Get()
@@ -32,15 +39,13 @@ export class WebhookController {
     if (mode === 'subscribe' && token === process.env.FB_VERIFY_TOKEN) {
       return res.status(HttpStatus.OK).send(challenge); // MUST be plain text
     }
-    // Facebook expects 403 if token mismatch
     throw new ForbiddenException();
   }
 
   // Incoming events (POST)
   @Post()
-  @HttpCode(200) // IMPORTANT: Facebook expects 200 fast
+  @HttpCode(200)
   handleMessage(@Body() body: any) {
-    // Reply immediately so Facebook doesn't time out
     this.processMessage(body).catch((err) => {
       console.error(
         'processMessage error:',
@@ -53,10 +58,7 @@ export class WebhookController {
   private async processMessage(body: any) {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
-        // Ignore delivery/read events
         if (!messaging.message) continue;
-
-        // Ignore echoes (messages your page sent)
         if (messaging.message.is_echo) continue;
 
         const senderId = messaging.sender?.id;
@@ -64,16 +66,68 @@ export class WebhookController {
 
         if (!senderId || !text) continue;
 
-        // (Optional) show typing indicator
         await this.sendSenderAction(senderId, 'typing_on');
 
-        const aiReply = await this.aiService.getCompletion(text);
+        try {
+          // ✅ Load user memory
+          const mem = await this.memoryService.getOrCreate(senderId);
 
-        await this.sendMessage(senderId, aiReply);
+          // ✅ Build OpenAI context messages from memory
+          const contextMessages = this.buildContextMessages(mem);
 
-        await this.sendSenderAction(senderId, 'typing_off');
+          // ✅ Ask AI (now includes memory context)
+          const aiReply = await this.aiService.getCompletion(
+            text,
+            contextMessages,
+          );
+
+          await this.sendMessage(senderId, aiReply);
+
+          // ✅ Save chat turns
+          await this.memoryService.addTurn(senderId, 'user', text);
+          await this.memoryService.addTurn(senderId, 'assistant', aiReply);
+        } catch (error: any) {
+          console.error(
+            'AI/memory error:',
+            error?.response?.data || error?.message || error,
+          );
+          try {
+            await this.sendMessage(
+              senderId,
+              'დაფიქსირდა შეცდომა. კიდევ სცადე ცოტა ხანში.',
+            );
+          } catch {}
+        } finally {
+          await this.sendSenderAction(senderId, 'typing_off');
+        }
       }
     }
+  }
+
+  private buildContextMessages(mem: any): ChatMessage[] {
+    const context: ChatMessage[] = [];
+
+    // ✅ Summary goes as a system message (lightweight long-term memory)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    if (mem?.summary?.trim()) {
+      context.push({
+        role: 'system',
+        content:
+          `MEMORY SUMMARY (use as context; don't repeat verbatim):\n` +
+          mem.summary,
+      });
+    }
+
+    // ✅ Recent chat (short-term memory)
+    const recent = Array.isArray(mem?.recentMessages) ? mem.recentMessages : [];
+    for (const m of recent) {
+      if (!m?.content) continue;
+      if (m.role === 'user' || m.role === 'assistant') {
+        context.push({ role: m.role, content: m.content });
+      }
+    }
+
+    return context;
   }
 
   private async sendSenderAction(

@@ -1,11 +1,24 @@
 import { Module } from '@nestjs/common';
 import { WebhookController } from './controller/webhook.controller';
-import { AppService } from './service/app.service';
 import { OpenaiService } from './service/openai.service';
+import { MongooseModule } from '@nestjs/mongoose';
+import { MemoryModule } from './memory/memory.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [],
+  imports: [
+    // ✅ LOAD ENV FIRST
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+
+    // ✅ NOW MongoDB can read process.env.MONGO_URL
+    MongooseModule.forRoot(process.env.MONGO_URL!),
+
+    MemoryModule,
+  ],
   controllers: [WebhookController],
-  providers: [AppService, OpenaiService],
+  providers: [OpenaiService],
 })
 export class AppModule {}
