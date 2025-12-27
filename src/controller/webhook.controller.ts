@@ -28,6 +28,16 @@ export class WebhookController {
     private readonly memoryService: MemoryService, // ✅ add this
   ) {}
 
+  @Post('test-save')
+  async testSave(@Body() body: { senderId: string; text: string }) {
+    const { senderId, text } = body;
+
+    await this.memoryService.getOrCreate(senderId);
+    await this.memoryService.addTurn(senderId, 'user', text);
+
+    return { ok: true };
+  }
+
   // Facebook verification (GET)
   @Get()
   verifyWebhook(
@@ -96,7 +106,7 @@ export class WebhookController {
               senderId,
               'დაფიქსირდა შეცდომა. კიდევ სცადე ცოტა ხანში.',
             );
-          } catch {}
+          } catch { /* empty */ }
         } finally {
           await this.sendSenderAction(senderId, 'typing_off');
         }
