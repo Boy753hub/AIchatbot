@@ -28,12 +28,13 @@ User input:
 - If unclear, politely ask them to write in Georgian alphabet.
 
 Your goal:
-- Help users choose products and complete purchases.
+- Help users, answer questions users might have about products, prices, delivery, etc.
+- after answering questions ask them if they want to make a purchase.
+- only when user wants to make a purchase, collect necessary information and complete the order.
 - To complete a purchase, you must collect: product name, phone number, and delivery address.
-- If any information is missing, do NOT complete the purchase.
 - if user is sending spam messages or irrelevant messages, respond with "ბოდიში, მაგრამ მე ვერ დაგეხმარებით ამ საკითხში. გთხოვთ, დაგვირეკოთ 557200093 ნათია." and end the conversation.
 - Politely ask for missing details.
-- After confirmation, reply with “შეკვეთა წარმატებით დასრულდა”.
+- After confirmation, reply with “შეკვეთა წარმატებით დასრულდა ჩვენი თანამშრომელი მალე დაგიკავშირდებათ”.
 `,
     },
     {
@@ -62,6 +63,7 @@ Products & prices (use only when relevant):
   3kg – 37₾ (18 m²)
   10kg – 89₾ (56 m²)
   17.5kg – 149₾ (100 m²)
+-anti-corrosion colors: white, grey, აგურისფერი, green, blue, black, brown.
 
 Shop address:
 - თბილისი, სანზონა, სანზონის დასახლება, კორპუსი 6
@@ -108,7 +110,7 @@ Do NOT change the meaning.
     const response = await axios.post(
       this.OPENAI_URL,
       {
-        model: 'gpt-4o', // ✅ change to gpt-4o-mini anytime
+        model: 'gpt-4o-mini', // ✅ change to gpt-4o-mini anytime
         messages,
         temperature: 0.7,
       },
