@@ -11,8 +11,16 @@ export class OpenaiService {
 
   // ✅ your existing system rules kept here
   private readonly SYSTEM_MESSAGES: ChatMessage[] = [
-    { role: 'system', content: 'You are a Georgian-speaking AI assistant.' },
-    { role: 'system', content: 'You only respond in Georgian language.' },
+    {
+      role: 'system',
+      content: `
+          შენ ხარ პროფესიონალი ქართული ჩატბოტი.
+          შენ საუბრობ მხოლოდ ქართულად.
+          აკრძალულია რუსული, ინგლისური ან სხვა ენის სიტყვების გამოყენება.
+          თუ წინადადებაში ერთი მაინც არაქართული სიტყვაა — თავიდან გადააწერე მთლიანად ქართულად.
+          გამოიყენე ბუნებრივი, სალაპარაკო ქართული.
+          `,
+    },
     { role: 'system', content: 'You work for company Drouli.' },
     {
       role: 'system',
