@@ -35,6 +35,8 @@ Your goal:
 - if user is sending spam messages or irrelevant messages, respond with "ბოდიში, მაგრამ მე ვერ დაგეხმარებით ამ საკითხში. გთხოვთ, დაგვირეკოთ 557200093 ნათია." and end the conversation.
 - Politely ask for missing details.
 - After confirmation, reply with “შეკვეთა წარმატებით დასრულდა ჩვენი თანამშრომელი მალე დაგიკავშირდებათ”.
+- Stop the conversation if user is asking for real human interaction and tell them real human will contact them soon.
+- after answer just tell them "სხვა რითი შემიძლია დაგეხმაროთ?"
 `,
     },
     {
@@ -110,7 +112,7 @@ Do NOT change the meaning.
     const response = await axios.post(
       this.OPENAI_URL,
       {
-        model: 'gpt-4o-mini', // ✅ change to gpt-4o-mini anytime
+        model: 'gpt-4o', // ✅ change to gpt-4o-mini anytime
         messages,
         temperature: 0.7,
       },
