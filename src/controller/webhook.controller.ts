@@ -28,8 +28,6 @@ export class WebhookController {
     private readonly memoryService: MemoryService, // ✅ add this
   ) {}
 
-
-
   @Post('test-save')
   async testSave(@Body() body: { senderId: string; text: string }) {
     const { senderId, text } = body;
@@ -84,20 +82,42 @@ export class WebhookController {
           // ✅ Load user memory
           const mem = await this.memoryService.getOrCreate(senderId);
 
+          const mode: 'ai' | 'human' = mem.mode ?? 'ai';
+
+          // 🛑 1️⃣ If already in HUMAN mode → DO NOTHING
+          if (mode === 'human') {
+            return; // human replies manually from FB Inbox
+          }
+
+          // 🧑‍💻 2️⃣ User requests human → switch mode
+          if (this.wantsHuman(text)) {
+            await this.memoryService.setMode(senderId, 'human');
+
+            await this.sendMessage(
+              senderId,
+              'კარგი, თქვენი მოთხოვნა მიღებულია. ჩვენი თანამშრომელი მალე დაგიკავშირდებათ.',
+            );
+
+            return; // 🔴 STOP AI COMPLETELY
+          }
+
           // ✅ Build OpenAI context messages from memory
           const contextMessages = this.buildContextMessages(mem);
 
-          // ✅ Ask AI (now includes memory context)
+          // 🤖 Ask AI
           const aiReply = await this.aiService.getCompletion(
             text,
             contextMessages,
+            'ai',
           );
 
-          await this.sendMessage(senderId, aiReply);
+          if (aiReply) {
+            await this.sendMessage(senderId, aiReply);
 
-          // ✅ Save chat turns
-          await this.memoryService.addTurn(senderId, 'user', text);
-          await this.memoryService.addTurn(senderId, 'assistant', aiReply);
+            // ✅ Save chat turns
+            await this.memoryService.addTurn(senderId, 'user', text);
+            await this.memoryService.addTurn(senderId, 'assistant', aiReply);
+          }
         } catch (error: any) {
           console.error(
             'AI/memory error:',
@@ -108,9 +128,9 @@ export class WebhookController {
               senderId,
               'დაფიქსირდა შეცდომა. კიდევ სცადე ცოტა ხანში.',
             );
-          } catch { /* empty */ }
-        } finally {
-          await this.sendSenderAction(senderId, 'typing_off');
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
@@ -186,5 +206,21 @@ export class WebhookController {
       console.error('FB send error:', error.response?.data || error.message);
       throw error;
     }
+  }
+  private readonly HUMAN_KEYWORDS = [
+    'human',
+    'operator',
+    'agent',
+    'support',
+    'real person',
+    'live agent',
+    'ადამიანთან საუბარი',
+    'ცოცხალი ოპერატორი',
+    'ოპერატორი',
+  ];
+
+  private wantsHuman(text: string): boolean {
+    const lower = text.toLowerCase();
+    return this.HUMAN_KEYWORDS.some((k) => lower.includes(k));
   }
 }

@@ -38,6 +38,15 @@ export class Memory {
     address?: string;
   };
 
+  // 🧑‍💻 Conversation control (AI ↔ Human)
+  @Prop({
+    type: String,
+    enum: ['ai', 'human'],
+    default: 'ai',
+    index: true,
+  })
+  mode: 'ai' | 'human';
+
   // optional: update this whenever user talks (good for TTL)
   @Prop({ type: Date, default: () => new Date(), index: true })
   lastSeenAt: Date;

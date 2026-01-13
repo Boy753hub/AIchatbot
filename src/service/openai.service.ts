@@ -62,22 +62,22 @@ Delivery:
 Products & prices (use only when relevant):
 - Services with materials: 60–116 GEL per m².
 - Transparent waterproofing:
-  2.5L – 94₾ (12.5 m²)
-  5L – 175₾ (25 m²)
-  10L – 330₾ (50 m²)
-  15L – 505₾ (75 m²)
-  20L – 650₾ (100 m²)
+  2.5L – 94 GEL (12.5 m²)
+  5L – 175 GEL (25 m²)
+  10L – 330 GEL (50 m²)
+  15L – 505 GEL (75 m²)
+  20L – 650 GEL (100 m²)
 - White waterproofing (one layer):
-  3kg – 70₾ (7–9 m²)
-  8kg – 179₾ (22–25 m²)
-  20kg – 289₾ (45–50 m²)
+  3kg – 70 GEL (7–9 m²)
+  8kg – 179 GEL (22–25 m²)
+  20kg – 289 GEL (45–50 m²)
 - Polyurethane waterproofing:
-  5kg – 185₾ (5–6 m²)
-  25kg – 678₾ (27–29 m², two layers)
+  5kg – 185 GEL (5–6 m²)
+  25kg – 678 GEL (27–29 m², two layers)
 - Interior & facade washable paint:
-  3kg – 37₾ (18 m²)
-  10kg – 89₾ (56 m²)
-  17.5kg – 149₾ (100 m²)
+  3kg – 37 GEL (18 m²)
+  10kg – 89 GEL (56 m²)
+  17.5kg – 149 GEL (100 m²)
 -anti-corrosion colors: white, grey, აგურისფერი, green, blue, black, brown.
 If the user asks for information you don’t have, politely ask them to call 557200093 for more details.
 
@@ -147,6 +147,8 @@ Do NOT change the meaning.
   async getCompletion(
     userText: string,
     contextMessages: ChatMessage[] = [],
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    p0: string,
   ): Promise<string> {
     // 1️⃣ First generation
     let reply = await this.callOpenAI([

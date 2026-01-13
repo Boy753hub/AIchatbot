@@ -64,4 +64,13 @@ export class MemoryService {
       { upsert: true },
     );
   }
+
+  // 🧑‍💻 HUMAN HANDOFF CONTROL (NEW)
+  async setMode(userId: string, mode: 'ai' | 'human') {
+    await this.memModel.updateOne(
+      { userId },
+      { $set: { mode, lastSeenAt: new Date() } },
+      { upsert: true },
+    );
+  }
 }
