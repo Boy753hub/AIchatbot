@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
@@ -16,29 +17,36 @@ import {
 import axios from 'axios';
 import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
-import { MemoryService } from 'src/memory/memory.service'; // ✅ adjust path if needed
+import { MemoryService } from 'src/memory/memory.service';
 
 type ChatRole = 'system' | 'user' | 'assistant';
 type ChatMessage = { role: ChatRole; content: string };
 
 @Controller('webhook')
 export class WebhookController {
+  private readonly AI_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
+
+  private readonly HUMAN_KEYWORDS = [
+    'human',
+    'operator',
+    'agent',
+    'support',
+    'live agent',
+    'ადამიანთან საუბარი',
+    'ცოცხალი ოპერატორი',
+    'ოპერატორი',
+    'ადამიანი მინდა',
+    'ნამდვილ კაცს დამალაპარაკეთ',
+  ];
+
   constructor(
     private readonly aiService: OpenaiService,
-    private readonly memoryService: MemoryService, // ✅ add this
+    private readonly memoryService: MemoryService,
   ) {}
 
-  @Post('test-save')
-  async testSave(@Body() body: { senderId: string; text: string }) {
-    const { senderId, text } = body;
-
-    await this.memoryService.getOrCreate(senderId);
-    await this.memoryService.addTurn(senderId, 'user', text);
-
-    return { ok: true };
-  }
-
-  // Facebook verification (GET)
+  // ===============================
+  // Facebook verification
+  // ===============================
   @Get()
   verifyWebhook(
     @Query('hub.mode') mode: string,
@@ -47,180 +55,139 @@ export class WebhookController {
     @Res() res: express.Response,
   ) {
     if (mode === 'subscribe' && token === process.env.FB_VERIFY_TOKEN) {
-      return res.status(HttpStatus.OK).send(challenge); // MUST be plain text
+      return res.status(HttpStatus.OK).send(challenge);
     }
     throw new ForbiddenException();
   }
 
-  // Incoming events (POST)
+  // ===============================
+  // Incoming messages
+  // ===============================
   @Post()
   @HttpCode(200)
   handleMessage(@Body() body: any) {
-    this.processMessage(body).catch((err) => {
-      console.error(
-        'processMessage error:',
-        err?.response?.data || err?.message || err,
-      );
-    });
+    this.processMessage(body).catch(console.error);
     return 'EVENT_RECEIVED';
   }
 
   private async processMessage(body: any) {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
-        if (!messaging.message) continue;
-        if (messaging.message.is_echo) continue;
+        if (!messaging.message || messaging.message.is_echo) continue;
 
         const senderId = messaging.sender?.id;
         const text = messaging.message?.text;
-
         if (!senderId || !text) continue;
+
+        // 🔁 AUTO-RETURN CHECK
+        const mode = await this.memoryService.ensureAiIfExpired(senderId);
+
+        // 🛑 Human mode → bot silent
+        if (mode === 'human') continue;
 
         await this.sendSenderAction(senderId, 'typing_on');
 
         try {
-          // ✅ Load user memory
-          const mem = await this.memoryService.getOrCreate(senderId);
+          await this.memoryService.addTurn(senderId, 'user', text);
 
-          const mode: 'ai' | 'human' = mem.mode ?? 'ai';
-
-          // 🛑 1️⃣ If already in HUMAN mode → DO NOTHING
-          if (mode === 'human') {
-            return; // human replies manually from FB Inbox
-          }
-
-          // 🧑‍💻 2️⃣ User requests human → switch mode
           if (this.wantsHuman(text)) {
-            await this.memoryService.setMode(senderId, 'human');
+            await this.memoryService.switchToHuman(senderId);
 
             await this.sendMessage(
               senderId,
-              'კარგი, თქვენი მოთხოვნა მიღებულია. ჩვენი თანამშრომელი მალე დაგიკავშირდებათ.',
+              'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
 
-            return; // 🔴 STOP AI COMPLETELY
+            await this.sendSenderAction(senderId, 'typing_off');
+            continue;
           }
 
-          // ✅ Build OpenAI context messages from memory
+          const mem = await this.memoryService.getOrCreate(senderId);
           const contextMessages = this.buildContextMessages(mem);
 
-          // 🤖 Ask AI
           const aiReply = await this.aiService.getCompletion(
             text,
             contextMessages,
             'ai',
           );
 
-          if (aiReply) {
-            await this.sendMessage(senderId, aiReply);
+          if (!aiReply) continue;
 
-            // ✅ Save chat turns
-            await this.memoryService.addTurn(senderId, 'user', text);
-            await this.memoryService.addTurn(senderId, 'assistant', aiReply);
-          }
-        } catch (error: any) {
-          console.error(
-            'AI/memory error:',
-            error?.response?.data || error?.message || error,
-          );
-          try {
+          // 🚨 AI HANDOFF
+          if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
+            await this.memoryService.switchToHuman(senderId);
+
             await this.sendMessage(
               senderId,
-              'დაფიქსირდა შეცდომა. კიდევ სცადე ცოტა ხანში.',
+              'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
-          } catch {
-            /* ignore */
+
+            await this.sendSenderAction(senderId, 'typing_off');
+            continue;
           }
+
+          await this.sendMessage(senderId, aiReply);
+          await this.memoryService.addTurn(senderId, 'assistant', aiReply);
+          await this.sendSenderAction(senderId, 'typing_off');
+        } catch (err) {
+          console.error(err);
+          await this.memoryService.switchToHuman(senderId);
+          await this.sendMessage(
+            senderId,
+            'დაფიქსირდა შეცდომა. ოპერატორი მალე დაგიკავშირდებათ.',
+          );
+          await this.sendSenderAction(senderId, 'typing_off');
         }
       }
     }
   }
 
+  // ===============================
+  // Helpers
+  // ===============================
   private buildContextMessages(mem: any): ChatMessage[] {
     const context: ChatMessage[] = [];
 
-    // ✅ Summary goes as a system message (lightweight long-term memory)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     if (mem?.summary?.trim()) {
       context.push({
         role: 'system',
         content:
-          `MEMORY SUMMARY (use as context; don't repeat verbatim):\n` +
-          mem.summary,
+          `MEMORY SUMMARY (use as context; do not repeat):\n` + mem.summary,
       });
     }
 
-    // ✅ Recent chat (short-term memory)
-    const recent = Array.isArray(mem?.recentMessages) ? mem.recentMessages : [];
-    for (const m of recent) {
-      if (!m?.content) continue;
-      if (m.role === 'user' || m.role === 'assistant') {
-        context.push({ role: m.role, content: m.content });
-      }
+    for (const m of mem?.recentMessages || []) {
+      if (m?.content) context.push({ role: m.role, content: m.content });
     }
 
     return context;
+  }
+
+  private wantsHuman(text: string): boolean {
+    const lower = text.toLowerCase();
+    return this.HUMAN_KEYWORDS.some((k) => lower.includes(k));
   }
 
   private async sendSenderAction(
     senderId: string,
     action: 'typing_on' | 'typing_off' | 'mark_seen',
   ) {
-    const url = `https://graph.facebook.com/v24.0/me/messages`;
-
-    try {
-      await axios.post(
-        url,
-        {
-          recipient: { id: senderId },
-          sender_action: action,
-        },
-        {
-          params: { access_token: process.env.FB_PAGE_TOKEN },
-        },
-      );
-    } catch (error: any) {
-      console.error(
-        'FB sender_action error:',
-        error.response?.data || error.message,
-      );
-    }
+    await axios.post(
+      'https://graph.facebook.com/v24.0/me/messages',
+      { recipient: { id: senderId }, sender_action: action },
+      { params: { access_token: process.env.FB_PAGE_TOKEN } },
+    );
   }
 
   private async sendMessage(senderId: string, text: string) {
-    const url = `https://graph.facebook.com/v24.0/me/messages`;
-
-    try {
-      await axios.post(
-        url,
-        {
-          recipient: { id: senderId },
-          messaging_type: 'RESPONSE',
-          message: { text },
-        },
-        {
-          params: { access_token: process.env.FB_PAGE_TOKEN },
-        },
-      );
-    } catch (error: any) {
-      console.error('FB send error:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-  private readonly HUMAN_KEYWORDS = [
-    'human',
-    'operator',
-    'agent',
-    'support',
-    'real person',
-    'live agent',
-    'ადამიანთან საუბარი',
-    'ცოცხალი ოპერატორი',
-    'ოპერატორი',
-  ];
-
-  private wantsHuman(text: string): boolean {
-    const lower = text.toLowerCase();
-    return this.HUMAN_KEYWORDS.some((k) => lower.includes(k));
+    await axios.post(
+      'https://graph.facebook.com/v24.0/me/messages',
+      {
+        recipient: { id: senderId },
+        messaging_type: 'RESPONSE',
+        message: { text },
+      },
+      { params: { access_token: process.env.FB_PAGE_TOKEN } },
+    );
   }
 }

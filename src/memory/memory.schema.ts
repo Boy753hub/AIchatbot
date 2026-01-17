@@ -1,58 +1,32 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { Document } from 'mongoose';
 
-export type MemoryDocument = HydratedDocument<Memory>;
-
-@Schema({ _id: false })
-export class ChatMsg {
-  @Prop({ enum: ['user', 'assistant'], required: true })
-  role: 'user' | 'assistant';
-
-  @Prop({ required: true })
-  content: string;
-
-  @Prop({ type: Date, default: () => new Date() })
-  ts: Date;
-}
-
-const ChatMsgSchema = SchemaFactory.createForClass(ChatMsg);
+export type MemoryDocument = Memory & Document;
 
 @Schema({ timestamps: true })
 export class Memory {
-  @Prop({ required: true, unique: true, index: true })
-  userId: string; // Messenger senderId
+  @Prop({ required: true, unique: true })
+  senderId: string;
+
+  @Prop({ default: 'ai' })
+  mode: 'ai' | 'human';
+
+  @Prop()
+  humanSince?: Date;
 
   @Prop({ default: '' })
   summary: string;
 
-  @Prop({ type: [ChatMsgSchema], default: [] })
-  recentMessages: ChatMsg[];
-
   @Prop({
-    type: Object,
-    default: {},
+    type: [
+      {
+        role: { type: String },
+        content: { type: String },
+      },
+    ],
+    default: [],
   })
-  profile: {
-    name?: string;
-    phone?: string;
-    address?: string;
-  };
-
-  // 🧑‍💻 Conversation control (AI ↔ Human)
-  @Prop({
-    type: String,
-    enum: ['ai', 'human'],
-    default: 'ai',
-    index: true,
-  })
-  mode: 'ai' | 'human';
-
-  // optional: update this whenever user talks (good for TTL)
-  @Prop({ type: Date, default: () => new Date(), index: true })
-  lastSeenAt: Date;
+  recentMessages: { role: 'user' | 'assistant'; content: string }[];
 }
 
 export const MemorySchema = SchemaFactory.createForClass(Memory);
-
-// OPTIONAL TTL: auto-delete memory if user inactive for 90 days
-// MemorySchema.index({ lastSeenAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
@@ -8,100 +9,118 @@ type ChatMessage = { role: ChatRole; content: string };
 @Injectable()
 export class OpenaiService {
   private readonly OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+  private readonly AI_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
 
-  // 🔴 MAIN SYSTEM RULES
+  // ===============================
+  // 🔴 MAIN SYSTEM PROMPT
+  // ===============================
   private readonly SYSTEM_MESSAGES: ChatMessage[] = [
     {
       role: 'system',
       content: `
-You are a chatbot for the company Drouli.
+You are a professional customer-support AI for the company "Drouli".
 
-Language rules:
+━━━━━━━━━━━━━━━━━━
+LANGUAGE RULES (STRICT)
+━━━━━━━━━━━━━━━━━━
 - Respond ONLY in Georgian.
-- Foreign words (Russian, English, Portuguese, etc.) are strictly forbidden.
-- If even one foreign word appears, rewrite the entire response in pure Georgian.
-- Use natural, friendly, conversational Georgian.
+- Russian, English, Portuguese or any foreign words are STRICTLY FORBIDDEN.
+- If even ONE foreign word appears, rewrite the entire response in pure Georgian.
+- Use clear, natural, polite Georgian.
 
-User input:
-- Users may write Georgian using Latin letters (e.g. "gamarjoba").
-- Try to understand it.
-- If unclear, politely ask them to write in Georgian alphabet.
+Users may write Georgian using Latin letters.
+Try to understand it.
+If unclear, politely ask them to write in Georgian alphabet.
 
-Your role and goal:
-- Help users by answering questions about products, prices, delivery, and availability.
-- Do NOT collect personal information unless the user clearly agrees to make a purchase.
+━━━━━━━━━━━━━━━━━━
+CRITICAL HANDOFF RULE (ABSOLUTE)
+━━━━━━━━━━━━━━━━━━
+If ANY of the following is true, output EXACTLY this token and NOTHING else:
+${this.AI_HANDOFF_TOKEN}
 
-Purchase flow:
-- Only when the user confirms they want to make a purchase, collect the required information.
-- Required information:
+Trigger handoff when:
+- You are not 100% sure about the answer
+- The question is outside provided information
+- The user asks for a real human / operator
+- The user is angry, emotional, confused, or dissatisfied
+- The user asks about topics you are not allowed to answer
+- A purchase flow becomes unclear or risky
+
+⚠️ When handing off:
+- Do NOT explain
+- Do NOT apologize
+- Do NOT add Georgian text
+- Output ONLY the token
+
+━━━━━━━━━━━━━━━━━━
+YOUR ROLE
+━━━━━━━━━━━━━━━━━━
+- Answer questions about products, prices, delivery, availability
+- NEVER guess or invent information
+- If information is missing → HANDOFF
+- If the user sends spam, insults, or irrelevant content → HANDOFF
+
+━━━━━━━━━━━━━━━━━━
+PURCHASE FLOW (SAFE)
+━━━━━━━━━━━━━━━━━━
+- Collect order details ONLY after the user clearly wants to buy
+- Required fields:
   • Product name
-  • Customer full name
+  • Full name
   • Phone number
   • Delivery address
-- If any required information is missing, politely ask for it.
-- After receiving all information, repeat the details back to the user for confirmation.
-- Complete the order ONLY after the user confirms the details.
-- After confirmation, reply with:
-  “შეკვეთა წარმატებით დასრულდა ჩვენი თანამშრომელი მალე დაგიკავშირდებათ”
-
-Conversation control:
-- If the user requests to speak with a real human, politely inform them that a real representative will contact them soon and stop the conversation.
-- If the user sends spam, offensive, or irrelevant messages, respond ONLY with:
-  “ბოდიში, მაგრამ მე ვერ დაგეხმარებით ამ საკითხში. გთხოვთ, დაგვირეკოთ 557200093 ნათია.”
-  Then stop responding further.
-
+- If the user hesitates or is unclear → HANDOFF
+- After confirmation reply ONLY:
+“შეკვეთა წარმატებით დასრულდა. ჩვენი თანამშრომელი მალე დაგიკავშირდებათ.”
 `,
     },
     {
       role: 'system',
       content: `
-Delivery:
-- Tbilisi: next day, free.
-- Regions: 3–4 days, +6 GEL.
+━━━━━━━━━━━━━━━━━━
+DELIVERY
+━━━━━━━━━━━━━━━━━━
+- თბილისი: შემდეგი დღე, უფასო
+- რეგიონები: 3–4 დღე, +6 ლარი
 
-Products & prices (use only when relevant):
-- Services with materials: 60–116 GEL per m².
-- Transparent waterproofing:
-  2.5L – 94 GEL (12.5 m²)
-  5L – 175 GEL (25 m²)
-  10L – 330 GEL (50 m²)
-  15L – 505 GEL (75 m²)
-  20L – 650 GEL (100 m²)
-- White waterproofing (one layer):
-  3kg – 70 GEL (7–9 m²)
-  8kg – 179 GEL (22–25 m²)
-  20kg – 289 GEL (45–50 m²)
-- Polyurethane waterproofing:
-  5kg – 185 GEL (5–6 m²)
-  25kg – 678 GEL (27–29 m², two layers)
-- Interior & facade washable paint:
-  3kg – 37 GEL (18 m²)
-  10kg – 89 GEL (56 m²)
-  17.5kg – 149 GEL (100 m²)
--anti-corrosion colors: white, grey, აგურისფერი, green, blue, black, brown.
-If the user asks for information you don’t have, politely ask them to call 557200093 for more details.
+━━━━━━━━━━━━━━━━━━
+PRODUCTS & PRICES
+━━━━━━━━━━━━━━━━━━
+- მომსახურება მასალით: 60–116 ლარი / მ²
 
-Additional info:
-- Website: drouli.ge
-- Warehouse: სანზონა, სანზონის დასახლება, კორპუსი 6
+გამჭვირვალე ჰიდროიზოლაცია:
+- 2.5ლ – 94 ლარი (12.5 მ²)
+- 5ლ – 175 ლარი (25 მ²)
+- 10ლ – 330 ლარი (50 მ²)
+- 15ლ – 505 ლარი (75 მ²)
+- 20ლ – 650 ლარი (100 მ²)
+
+თეთრი ჰიდროიზოლაცია (ერთი ფენა):
+- 3კგ – 70 ლარი (7–9 მ²)
+- 8კგ – 179 ლარი (22–25 მ²)
+- 20კგ – 289 ლარი (45–50 მ²)
+
+პოლიურეთანის ჰიდროიზოლაცია:
+- 5კგ – 185 ლარი (5–6 მ²)
+- 25კგ – 678 ლარი (27–29 მ², ორი ფენა)
+
+შიდა და ფასადის სარეცხი საღებავი:
+- 3კგ – 37 ლარი (18 მ²)
+- 10კგ – 89 ლარი (56 მ²)
+- 17.5კგ – 149 ლარი (100 მ²)
+
+ანტიკოროზიული საღებავები:
+თეთრი, ნაცრისფერი, აგურისფერი, მწვანე, ლურჯი, შავი, ყავისფერი
+
+თუ კითხვა სცდება ამ ინფორმაციას → HANDOFF
 `,
     },
   ];
 
-  // 🧹 CLEANUP PROMPT (LANGUAGE FIX)
-  private readonly CLEANUP_PROMPT: ChatMessage = {
-    role: 'system',
-    content: `
-Check the following text.
-If it contains ANY foreign words (Russian, English, Portuguese such as "posso", "ok", "delivery"),
-rewrite it fully in clean, natural Georgian.
-Do NOT change the meaning.
-`,
-  };
-
-  // 🚫 COMMON FOREIGN WORDS FILTER
+  // ===============================
+  // 🔍 FOREIGN WORD FILTER
+  // ===============================
   private readonly FORBIDDEN_WORDS = [
-    'posso',
     'ok',
     'okay',
     'delivery',
@@ -113,9 +132,12 @@ Do NOT change the meaning.
 
   private containsForeignWords(text: string): boolean {
     const lower = text.toLowerCase();
-    return this.FORBIDDEN_WORDS.some((word) => lower.includes(word));
+    return this.FORBIDDEN_WORDS.some((w) => lower.includes(w));
   }
 
+  // ===============================
+  // 🔧 OPENAI CALL
+  // ===============================
   private async callOpenAI(messages: ChatMessage[]): Promise<string> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY is missing');
@@ -123,9 +145,9 @@ Do NOT change the meaning.
     const response = await axios.post(
       this.OPENAI_URL,
       {
-        model: 'gpt-4o', // ✅ change to gpt-4o-mini anytime
+        model: 'gpt-4o',
         messages,
-        temperature: 0.7,
+        temperature: 0.4, // lower = safer
       },
       {
         headers: {
@@ -135,32 +157,41 @@ Do NOT change the meaning.
       },
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const text = response.data?.choices?.[0]?.message?.content;
 
     return typeof text === 'string' && text.length
-      ? text
-      : 'ბოდიში — პასუხი ვერ მივიღე.';
+      ? text.trim()
+      : this.AI_HANDOFF_TOKEN;
   }
 
-  // 🔥 MAIN METHOD (SAFE FOR FB CHATBOT)
+  // ===============================
+  // 🔥 MAIN ENTRY POINT
+  // ===============================
   async getCompletion(
     userText: string,
     contextMessages: ChatMessage[] = [],
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    p0: string,
+    _mode: string,
   ): Promise<string> {
-    // 1️⃣ First generation
     let reply = await this.callOpenAI([
       ...this.SYSTEM_MESSAGES,
       ...contextMessages,
       { role: 'user', content: userText },
     ]);
 
-    // 2️⃣ Language cleanup if needed
+    // 🚨 NEVER TOUCH HANDOFF TOKEN
+    if (reply === this.AI_HANDOFF_TOKEN) {
+      return reply;
+    }
+
+    // 🧹 Language cleanup (safe)
     if (this.containsForeignWords(reply)) {
       reply = await this.callOpenAI([
-        this.CLEANUP_PROMPT,
+        {
+          role: 'system',
+          content:
+            'Rewrite the following text fully in clean, natural Georgian. Do not change meaning.',
+        },
         { role: 'user', content: reply },
       ]);
     }

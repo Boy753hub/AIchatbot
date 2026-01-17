@@ -1,76 +1,84 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Memory } from './memory.schema';
+import { Memory, MemoryDocument } from './memory.schema';
 
 @Injectable()
 export class MemoryService {
-  constructor(@InjectModel(Memory.name) private memModel: Model<Memory>) {}
+  constructor(
+    @InjectModel(Memory.name)
+    private readonly memoryModel: Model<MemoryDocument>,
+  ) {}
 
-  async getOrCreate(userId: string) {
-    const mem = await this.memModel.findOneAndUpdate(
-      { userId },
-      {
-        $setOnInsert: {
-          userId,
-          summary: '',
-          recentMessages: [],
-          profile: {},
-          lastSeenAt: new Date(),
-        },
-      },
-      { new: true, upsert: true },
-    );
+  // ===============================
+  // Create or load memory
+  // ===============================
+  async getOrCreate(senderId: string): Promise<MemoryDocument> {
+    let mem = await this.memoryModel.findOne({ senderId });
+
+    if (!mem) {
+      mem = await this.memoryModel.create({ senderId });
+    }
+
     return mem;
   }
 
-  async addTurn(userId: string, role: 'user' | 'assistant', content: string) {
-    const max = 20;
-
-    // push new message and keep only last `max`
-    await this.memModel.updateOne(
-      { userId },
+  // ===============================
+  // Switch to HUMAN mode
+  // ===============================
+  async switchToHuman(senderId: string) {
+    await this.memoryModel.updateOne(
+      { senderId },
       {
-        $set: { lastSeenAt: new Date() },
+        $set: {
+          mode: 'human',
+          humanSince: new Date(),
+        },
+      },
+    );
+  }
+
+  // ===============================
+  // Auto-return to AI after 24h
+  // ===============================
+  async ensureAiIfExpired(senderId: string): Promise<'ai' | 'human'> {
+    const mem = await this.getOrCreate(senderId);
+
+    if (mem.mode !== 'human' || !mem.humanSince) {
+      return mem.mode ?? 'ai';
+    }
+
+    const HOURS_24 = 24 * 60 * 60 * 1000;
+    const expired = Date.now() - new Date(mem.humanSince).getTime() >= HOURS_24;
+
+    if (expired) {
+      await this.memoryModel.updateOne(
+        { senderId },
+        {
+          $set: { mode: 'ai' },
+          $unset: { humanSince: '' },
+        },
+      );
+      return 'ai';
+    }
+
+    return 'human';
+  }
+
+  // ===============================
+  // Save conversation turns
+  // ===============================
+  async addTurn(senderId: string, role: 'user' | 'assistant', content: string) {
+    await this.memoryModel.updateOne(
+      { senderId },
+      {
         $push: {
           recentMessages: {
-            $each: [{ role, content, ts: new Date() }],
-            $slice: -max,
+            $each: [{ role, content }],
+            $slice: -20,
           },
         },
       },
-      { upsert: true },
-    );
-  }
-
-  async setSummary(userId: string, summary: string) {
-    await this.memModel.updateOne(
-      { userId },
-      { $set: { summary, lastSeenAt: new Date() } },
-      { upsert: true },
-    );
-  }
-
-  async updateProfile(userId: string, patch: Partial<Memory['profile']>) {
-    const setObj: Record<string, any> = {};
-    for (const [k, v] of Object.entries(patch)) {
-      if (v) setObj[`profile.${k}`] = v;
-    }
-    if (Object.keys(setObj).length === 0) return;
-
-    await this.memModel.updateOne(
-      { userId },
-      { $set: { ...setObj, lastSeenAt: new Date() } },
-      { upsert: true },
-    );
-  }
-
-  // 🧑‍💻 HUMAN HANDOFF CONTROL (NEW)
-  async setMode(userId: string, mode: 'ai' | 'human') {
-    await this.memModel.updateOne(
-      { userId },
-      { $set: { mode, lastSeenAt: new Date() } },
-      { upsert: true },
     );
   }
 }
