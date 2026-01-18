@@ -76,78 +76,60 @@ export class WebhookController {
         const senderId = messaging.sender?.id;
         if (!senderId) continue;
 
-        // ====================================================
-        // 1. DETECT BUTTON CLICKS (Payloads)
-        // ====================================================
-        let payload = null;
+        // 1. ALWAYS HANDLE BUTTONS FIRST (Even if in human mode)
+        // eslint-disable-next-line prefer-const
+        let payload =
+          messaging.postback?.payload ||
+          messaging.message?.quick_reply?.payload ||
+          null;
 
-        // Check if it's a Permanent Button click (Postback)
-        if (messaging.postback?.payload) {
-          payload = messaging.postback.payload;
-        }
-        // Check if it's a Quick Reply click (Just in case you use them elsewhere)
-        else if (messaging.message?.quick_reply?.payload) {
-          payload = messaging.message.quick_reply.payload;
-        }
-
-        // ====================================================
-        // 2. HANDLE ADMIN ACTIONS
-        // ====================================================
         if (payload) {
           if (payload === 'ADMIN_RETURN_AI') {
             await this.memoryService.clearConversation(senderId);
             await this.memoryService.setMode(senderId, 'ai');
             await this.sendMessage(senderId, '🤖 AI რეჟიმი კვლავ ჩართულია.');
-            continue; // Stop here, don't process as text
+            continue;
           }
-
           if (payload === 'ADMIN_KEEP_HUMAN') {
             await this.memoryService.switchToHuman(senderId);
-            // Optional: You can send a confirmation text here if you want
-            // await this.sendMessage(senderId, '✅ საუბარი გრძელდება ოპერატორთან.');
-            continue; // Stop here
+            continue;
           }
-
-          // If it's a button payload we don't recognize, stop anyway so AI doesn't reply to it
-          continue;
         }
 
-        // ====================================================
-        // 3. HANDLE REGULAR TEXT MESSAGES
-        // ====================================================
         if (!messaging.message || messaging.message.is_echo) continue;
-
         const text = messaging.message.text;
         if (!text) continue;
 
-        // Check if 24h passed, reset to AI if needed
-        const mode = await this.memoryService.ensureAiIfExpired(senderId);
+        // 2. CHECK KEYWORDS *BEFORE* THE SILENCE CHECK
+        // This ensures typing "operator" always sends the buttons
+        if (this.wantsHuman(text)) {
+          await this.memoryService.switchToHuman(senderId);
+          await this.sendMessage(
+            senderId,
+            'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
+          );
+          await this.sendAdminButtons(senderId);
+          continue;
+        }
 
-        // 🛑 IF HUMAN MODE: Bot stays silent
+        // 3. NOW CHECK MODE (If human, stay silent for normal text)
+        const mode = await this.memoryService.ensureAiIfExpired(senderId);
         if (mode === 'human') continue;
 
-        // 🤖 IF AI MODE: Process the message
+        // 4. AI PROCESSING (With Memory Protection)
         await this.sendSenderAction(senderId, 'typing_on');
 
         try {
           await this.memoryService.addTurn(senderId, 'user', text);
 
-          // Check if user is asking for a human
-          if (this.wantsHuman(text)) {
-            await this.memoryService.switchToHuman(senderId);
-            await this.sendMessage(
-              senderId,
-              'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
-            );
-            await this.sendAdminButtons(senderId); // Send the new buttons
-            await this.sendSenderAction(senderId, 'typing_off');
-            continue;
+          const mem = await this.memoryService.getOrCreate(senderId);
+
+          // CRITICAL: Only take the last 6-8 messages to prevent 500MB crash
+          if (mem.recentMessages && mem.recentMessages.length > 8) {
+            mem.recentMessages = mem.recentMessages.slice(-8);
           }
 
-          // Generate AI Reply
-          const mem = await this.memoryService.getOrCreate(senderId);
           const contextMessages = this.buildContextMessages(mem);
-
           const aiReply = await this.aiService.getCompletion(
             text,
             contextMessages,
@@ -159,30 +141,23 @@ export class WebhookController {
             continue;
           }
 
-          // Check for Handoff Token from AI
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
               senderId,
               'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
-            await this.sendAdminButtons(senderId); // Send the new buttons
-            await this.sendSenderAction(senderId, 'typing_off');
-            continue;
+            await this.sendAdminButtons(senderId);
+          } else {
+            await this.sendMessage(senderId, aiReply);
+            await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           }
-
-          // Send Normal AI Reply
-          await this.sendMessage(senderId, aiReply);
-          await this.memoryService.addTurn(senderId, 'assistant', aiReply);
-          await this.sendSenderAction(senderId, 'typing_off');
         } catch (err) {
-          console.error(err);
+          console.error('Heap Pressure or API Error:', err.message);
+          // Fallback if AI crashes (common on 500MB Render)
           await this.memoryService.switchToHuman(senderId);
-          await this.sendMessage(
-            senderId,
-            'დაფიქსირდა შეცდომა. ოპერატორი მალე დაგიკავშირდებათ.',
-          );
           await this.sendAdminButtons(senderId);
+        } finally {
           await this.sendSenderAction(senderId, 'typing_off');
         }
       }
