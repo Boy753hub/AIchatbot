@@ -76,37 +76,51 @@ export class WebhookController {
         const senderId = messaging.sender?.id;
         if (!senderId) continue;
 
-        /* ===============================
-         🧑‍💼 ADMIN BUTTON HANDLING
-         =============================== */
-        if (messaging.postback?.payload) {
-          const payload = messaging.postback.payload;
+        let payload = null;
 
+        // 1. Check for standard Button Postbacks (Generic Template)
+        if (messaging.postback?.payload) {
+          payload = messaging.postback.payload;
+        }
+
+        // 2. Check for Quick Reply clicks (THIS WAS MISSING)
+        if (messaging.message?.quick_reply?.payload) {
+          payload = messaging.message.quick_reply.payload;
+        }
+
+        /* ===============================
+          🧑‍💼 ADMIN BUTTON HANDLING
+          =============================== */
+        if (payload) {
           if (payload === 'ADMIN_RETURN_AI') {
             await this.memoryService.clearConversation(senderId);
             await this.memoryService.setMode(senderId, 'ai');
-
             await this.sendMessage(senderId, '🤖 AI რეჟიმი კვლავ ჩართულია.');
             continue;
           }
 
           if (payload === 'ADMIN_KEEP_HUMAN') {
             await this.memoryService.switchToHuman(senderId);
+            // Optional: Confirm to admin/user that mode is human
+            // await this.sendMessage(senderId, '✅ საუბარი გრძელდება ოპერატორთან.');
             continue;
           }
         }
 
         /* ===============================
-         📩 MESSAGE HANDLING
-         =============================== */
+          📩 MESSAGE HANDLING
+          =============================== */
+        // If it's just a button click (payload), we stop here so we don't process it as text
+        if (payload) continue;
+
         if (!messaging.message || messaging.message.is_echo) continue;
 
         const text = messaging.message.text;
         if (!text) continue;
 
         /* ===============================
-         ⏱ AUTO RETURN AFTER 24H
-         =============================== */
+          ⏱ AUTO RETURN AFTER 24H
+          =============================== */
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
 
         // 🛑 HUMAN MODE → BOT SILENT
@@ -118,8 +132,8 @@ export class WebhookController {
           await this.memoryService.addTurn(senderId, 'user', text);
 
           /* ===============================
-           👤 USER REQUESTS HUMAN
-           =============================== */
+            👤 USER REQUESTS HUMAN
+            =============================== */
           if (this.wantsHuman(text)) {
             await this.memoryService.switchToHuman(senderId);
 
@@ -130,14 +144,13 @@ export class WebhookController {
 
             // 🧑‍💼 ADMIN CONTROLS
             await this.sendAdminButtons(senderId);
-
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
           /* ===============================
-           🤖 AI RESPONSE
-           =============================== */
+            🤖 AI RESPONSE
+            =============================== */
           const mem = await this.memoryService.getOrCreate(senderId);
           const contextMessages = this.buildContextMessages(mem);
 
@@ -153,8 +166,8 @@ export class WebhookController {
           }
 
           /* ===============================
-           🚨 AI → HUMAN HANDOFF
-           =============================== */
+            🚨 AI → HUMAN HANDOFF
+            =============================== */
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
 
@@ -165,14 +178,13 @@ export class WebhookController {
 
             // 🧑‍💼 ADMIN CONTROLS
             await this.sendAdminButtons(senderId);
-
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
           /* ===============================
-           ✅ NORMAL AI REPLY
-           =============================== */
+            ✅ NORMAL AI REPLY
+            =============================== */
           await this.sendMessage(senderId, aiReply);
           await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           await this.sendSenderAction(senderId, 'typing_off');
@@ -185,9 +197,7 @@ export class WebhookController {
             'დაფიქსირდა შეცდომა. ოპერატორი მალე დაგიკავშირდებათ.',
           );
 
-          // 🧑‍💼 ADMIN CONTROLS
           await this.sendAdminButtons(senderId);
-
           await this.sendSenderAction(senderId, 'typing_off');
         }
       }
