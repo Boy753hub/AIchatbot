@@ -76,55 +76,67 @@ export class WebhookController {
         const senderId = messaging.sender?.id;
         if (!senderId) continue;
 
-        // 1. ALWAYS HANDLE BUTTONS FIRST (Even if in human mode)
-        // eslint-disable-next-line prefer-const
-        let payload =
-          messaging.postback?.payload ||
-          messaging.message?.quick_reply?.payload ||
-          null;
+        // ====================================================
+        // 🎭 1. AI-ს მართვა რეაქციებით (მხოლოდ ადმინისთვის)
+        // ====================================================
+        if (messaging.reaction) {
+          const reactionType = messaging.reaction.reaction; // 'love', 'smile'
+          const action = messaging.reaction.action; // 'react' ან 'unreact'
 
-        if (payload) {
-          if (payload === 'ADMIN_RETURN_AI') {
-            await this.memoryService.clearConversation(senderId);
-            await this.memoryService.setMode(senderId, 'ai');
-            await this.sendMessage(senderId, '🤖 AI რეჟიმი კვლავ ჩართულია.');
-            continue;
-          }
-          if (payload === 'ADMIN_KEEP_HUMAN') {
-            await this.memoryService.switchToHuman(senderId);
-            continue;
+          if (action === 'react') {
+            // ❤️ HEART (love) -> AI-ს ჩართვა და ისტორიის წაშლა
+            if (reactionType === 'love') {
+              await this.memoryService.setMode(senderId, 'ai');
+              await this.memoryService.clearConversation(senderId);
+              console.log(`✅ AI რეჟიმი გააქტიურდა ❤️-ით: ${senderId}`);
+              continue;
+            }
+
+            // 😊 SMILE (smile) -> AI-ს გათიშვა (ოპერატორზე გადაყვანა)
+            if (reactionType === 'smile') {
+              await this.memoryService.switchToHuman(senderId);
+              console.log(`🛑 AI გაითიშა 😊-ით: ${senderId}`);
+              continue;
+            }
           }
         }
 
+        // ====================================================
+        // 🛡️ 2. უსაფრთხოების შემოწმება (ECHO & EMPTY)
+        // ====================================================
+        // თუ შეტყობინება ადმინის გაგზავნილია (is_echo), ბოტი არ პასუხობს
         if (!messaging.message || messaging.message.is_echo) continue;
+
         const text = messaging.message.text;
         if (!text) continue;
 
-        // 2. CHECK KEYWORDS *BEFORE* THE SILENCE CHECK
-        // This ensures typing "operator" always sends the buttons
+        // ====================================================
+        // 🔍 3. საკვანძო სიტყვების შემოწმება (ოპერატორი)
+        // ====================================================
         if (this.wantsHuman(text)) {
           await this.memoryService.switchToHuman(senderId);
           await this.sendMessage(
             senderId,
             'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
           );
-          await this.sendAdminButtons(senderId);
           continue;
         }
 
-        // 3. NOW CHECK MODE (If human, stay silent for normal text)
+        // ====================================================
+        // 🤖 4. AI ლოგიკა და რეჟიმის შემოწმება
+        // ====================================================
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
+
+        // თუ "human" რეჟიმია, ბოტი სრულიად ჩუმდება
         if (mode === 'human') continue;
 
-        // 4. AI PROCESSING (With Memory Protection)
         await this.sendSenderAction(senderId, 'typing_on');
 
         try {
           await this.memoryService.addTurn(senderId, 'user', text);
-
           const mem = await this.memoryService.getOrCreate(senderId);
 
-          // CRITICAL: Only take the last 6-8 messages to prevent 500MB crash
+          // მეხსიერების დაცვა: ვინახავთ მხოლოდ ბოლო 8 მესიჯს (Railway-ს 500MB ლიმიტისთვის)
           if (mem.recentMessages && mem.recentMessages.length > 8) {
             mem.recentMessages = mem.recentMessages.slice(-8);
           }
@@ -141,29 +153,27 @@ export class WebhookController {
             continue;
           }
 
+          // თუ AI-მ გადაწყვიტა, რომ ვერ პასუხობს (Handoff Token)
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
               senderId,
               'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
-            await this.sendAdminButtons(senderId);
           } else {
+            // სტანდარტული AI პასუხი
             await this.sendMessage(senderId, aiReply);
             await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           }
         } catch (err) {
-          console.error('Heap Pressure or API Error:', err.message);
-          // Fallback if AI crashes (common on 500MB Render)
+          console.error('AI Processing Error:', err.message);
           await this.memoryService.switchToHuman(senderId);
-          await this.sendAdminButtons(senderId);
         } finally {
           await this.sendSenderAction(senderId, 'typing_off');
         }
       }
     }
   }
-
   // ===============================
   // Helpers
   // ===============================
