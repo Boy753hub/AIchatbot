@@ -241,36 +241,40 @@ export class WebhookController {
   private async sendAdminButtons(senderId: string) {
     const url = `https://graph.facebook.com/v24.0/me/messages`;
 
-    await axios.post(
-      url,
-      {
-        recipient: { id: senderId },
-        messaging_type: 'RESPONSE',
-        message: {
-          attachment: {
-            type: 'template', // <--- This makes it a permanent bubble
-            payload: {
-              template_type: 'button',
-              text: '🔧 ადმინისტრატორის კონტროლი (აირჩიეთ რეჟიმი):',
-              buttons: [
-                {
-                  type: 'postback',
-                  title: '🔁 AI-ზე დაბრუნება',
-                  payload: 'ADMIN_RETURN_AI',
-                },
-                {
-                  type: 'postback',
-                  title: '🧑‍💻 ოპერატორი',
-                  payload: 'ADMIN_KEEP_HUMAN',
-                },
-              ],
+    try {
+      await axios.post(
+        url,
+        {
+          recipient: { id: senderId },
+          message: {
+            attachment: {
+              type: 'template',
+              payload: {
+                template_type: 'button',
+                text: '🔧 ადმინისტრატორის კონტროლი:',
+                buttons: [
+                  {
+                    type: 'postback',
+                    title: '🔁 AI-ზე დაბრუნება',
+                    payload: 'ADMIN_RETURN_AI',
+                  },
+                  {
+                    type: 'postback',
+                    title: '🧑‍💻 ოპერატორი',
+                    payload: 'ADMIN_KEEP_HUMAN',
+                  },
+                ],
+              },
             },
           },
         },
-      },
-      {
-        params: { access_token: process.env.FB_PAGE_TOKEN },
-      },
-    );
+        { params: { access_token: process.env.FB_PAGE_TOKEN } },
+      );
+    } catch (error) {
+      console.error(
+        'FAILED TO SEND BUTTONS:',
+        error.response?.data || error.message,
+      );
+    }
   }
 }
