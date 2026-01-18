@@ -25,6 +25,8 @@ type ChatMessage = { role: ChatRole; content: string };
 @Controller('webhook')
 export class WebhookController {
   private readonly AI_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
+  // 👇 IMPORTANT: Use v21.0 (Stable). v24.0 does not exist yet!
+  private readonly FB_API_VERSION = 'v21.0';
 
   private readonly HUMAN_KEYWORDS = [
     'human',
@@ -66,7 +68,9 @@ export class WebhookController {
   @Post()
   @HttpCode(200)
   handleMessage(@Body() body: any) {
-    this.processMessage(body).catch(console.error);
+    this.processMessage(body).catch((err) => {
+      console.error('Critical Error in Webhook:', err.message);
+    });
     return 'EVENT_RECEIVED';
   }
 
@@ -77,41 +81,40 @@ export class WebhookController {
         if (!senderId) continue;
 
         // ====================================================
-        // 🎭 1. AI-ს მართვა რეაქციებით (მხოლოდ ადმინისთვის)
+        // 🎭 1. AI CONTROL VIA REACTION (ADMIN ONLY)
         // ====================================================
         if (messaging.reaction) {
-          const reactionType = messaging.reaction.reaction; // 'love', 'smile'
-          const action = messaging.reaction.action; // 'react' ან 'unreact'
+          const reactionType = messaging.reaction.reaction;
+          const action = messaging.reaction.action;
 
           if (action === 'react') {
-            // ❤️ HEART (love) -> AI-ს ჩართვა და ისტორიის წაშლა
+            // ❤️ HEART -> Enable AI
             if (reactionType === 'love') {
               await this.memoryService.setMode(senderId, 'ai');
               await this.memoryService.clearConversation(senderId);
-              console.log(`✅ AI რეჟიმი გააქტიურდა ❤️-ით: ${senderId}`);
+              console.log(`✅ AI Enabled for ${senderId}`);
               continue;
             }
 
-            // 😊 SMILE (smile) -> AI-ს გათიშვა (ოპერატორზე გადაყვანა)
+            // 😊 SMILE -> Disable AI
             if (reactionType === 'smile') {
               await this.memoryService.switchToHuman(senderId);
-              console.log(`🛑 AI გაითიშა 😊-ით: ${senderId}`);
+              console.log(`🛑 AI Disabled for ${senderId}`);
               continue;
             }
           }
         }
 
         // ====================================================
-        // 🛡️ 2. უსაფრთხოების შემოწმება (ECHO & EMPTY)
+        // 🛡️ 2. SECURITY CHECKS
         // ====================================================
-        // თუ შეტყობინება ადმინის გაგზავნილია (is_echo), ბოტი არ პასუხობს
         if (!messaging.message || messaging.message.is_echo) continue;
 
         const text = messaging.message.text;
         if (!text) continue;
 
         // ====================================================
-        // 🔍 3. საკვანძო სიტყვების შემოწმება (ოპერატორი)
+        // 🔍 3. KEYWORD CHECK
         // ====================================================
         if (this.wantsHuman(text)) {
           await this.memoryService.switchToHuman(senderId);
@@ -123,11 +126,10 @@ export class WebhookController {
         }
 
         // ====================================================
-        // 🤖 4. AI ლოგიკა და რეჟიმის შემოწმება
+        // 🤖 4. AI LOGIC
         // ====================================================
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
 
-        // თუ "human" რეჟიმია, ბოტი სრულიად ჩუმდება
         if (mode === 'human') continue;
 
         await this.sendSenderAction(senderId, 'typing_on');
@@ -136,12 +138,13 @@ export class WebhookController {
           await this.memoryService.addTurn(senderId, 'user', text);
           const mem = await this.memoryService.getOrCreate(senderId);
 
-          // მეხსიერების დაცვა: ვინახავთ მხოლოდ ბოლო 8 მესიჯს (Railway-ს 500MB ლიმიტისთვის)
+          // Memory Protection: Keep last 8 messages
           if (mem.recentMessages && mem.recentMessages.length > 8) {
             mem.recentMessages = mem.recentMessages.slice(-8);
           }
 
           const contextMessages = this.buildContextMessages(mem);
+
           const aiReply = await this.aiService.getCompletion(
             text,
             contextMessages,
@@ -153,7 +156,7 @@ export class WebhookController {
             continue;
           }
 
-          // თუ AI-მ გადაწყვიტა, რომ ვერ პასუხობს (Handoff Token)
+          // Check for Handoff
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
@@ -161,19 +164,21 @@ export class WebhookController {
               'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
           } else {
-            // სტანდარტული AI პასუხი
+            // Normal Reply
             await this.sendMessage(senderId, aiReply);
             await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           }
         } catch (err) {
           console.error('AI Processing Error:', err.message);
-          await this.memoryService.switchToHuman(senderId);
+          // Don't switch to human on every error, just log it.
+          // await this.memoryService.switchToHuman(senderId);
         } finally {
           await this.sendSenderAction(senderId, 'typing_off');
         }
       }
     }
   }
+
   // ===============================
   // Helpers
   // ===============================
@@ -183,8 +188,7 @@ export class WebhookController {
     if (mem?.summary?.trim()) {
       context.push({
         role: 'system',
-        content:
-          `MEMORY SUMMARY (use as context; do not repeat):\n` + mem.summary,
+        content: `MEMORY SUMMARY (use as context):\n` + mem.summary,
       });
     }
 
@@ -204,60 +208,34 @@ export class WebhookController {
     senderId: string,
     action: 'typing_on' | 'typing_off' | 'mark_seen',
   ) {
-    await axios.post(
-      'https://graph.facebook.com/v24.0/me/messages',
-      { recipient: { id: senderId }, sender_action: action },
-      { params: { access_token: process.env.FB_PAGE_TOKEN } },
-    );
+    try {
+      await axios.post(
+        `https://graph.facebook.com/${this.FB_API_VERSION}/me/messages`,
+        { recipient: { id: senderId }, sender_action: action },
+        { params: { access_token: process.env.FB_PAGE_TOKEN } },
+      );
+    } catch (error) {
+      console.error(
+        'SenderAction Error:',
+        error.response?.data || error.message,
+      );
+    }
   }
 
   private async sendMessage(senderId: string, text: string) {
-    await axios.post(
-      'https://graph.facebook.com/v24.0/me/messages',
-      {
-        recipient: { id: senderId },
-        messaging_type: 'RESPONSE',
-        message: { text },
-      },
-      { params: { access_token: process.env.FB_PAGE_TOKEN } },
-    );
-  }
-
-  private async sendAdminButtons(senderId: string) {
-    const url = `https://graph.facebook.com/v24.0/me/messages`;
-
     try {
       await axios.post(
-        url,
+        `https://graph.facebook.com/${this.FB_API_VERSION}/me/messages`,
         {
           recipient: { id: senderId },
-          message: {
-            attachment: {
-              type: 'template',
-              payload: {
-                template_type: 'button',
-                text: '🔧 ადმინისტრატორის კონტროლი:',
-                buttons: [
-                  {
-                    type: 'postback',
-                    title: '🔁 AI-ზე დაბრუნება',
-                    payload: 'ADMIN_RETURN_AI',
-                  },
-                  {
-                    type: 'postback',
-                    title: '🧑‍💻 ოპერატორი',
-                    payload: 'ADMIN_KEEP_HUMAN',
-                  },
-                ],
-              },
-            },
-          },
+          messaging_type: 'RESPONSE',
+          message: { text },
         },
         { params: { access_token: process.env.FB_PAGE_TOKEN } },
       );
     } catch (error) {
       console.error(
-        'FAILED TO SEND BUTTONS:',
+        'SendMessage Error:',
         error.response?.data || error.message,
       );
     }
