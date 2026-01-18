@@ -76,81 +76,75 @@ export class WebhookController {
         const senderId = messaging.sender?.id;
         if (!senderId) continue;
 
+        // ====================================================
+        // 1. DETECT BUTTON CLICKS (Payloads)
+        // ====================================================
         let payload = null;
 
-        // 1. Check for standard Button Postbacks (Generic Template)
+        // Check if it's a Permanent Button click (Postback)
         if (messaging.postback?.payload) {
           payload = messaging.postback.payload;
         }
-
-        // 2. Check for Quick Reply clicks (THIS WAS MISSING)
-        if (messaging.message?.quick_reply?.payload) {
+        // Check if it's a Quick Reply click (Just in case you use them elsewhere)
+        else if (messaging.message?.quick_reply?.payload) {
           payload = messaging.message.quick_reply.payload;
         }
 
-        /* ===============================
-          🧑‍💼 ADMIN BUTTON HANDLING
-          =============================== */
+        // ====================================================
+        // 2. HANDLE ADMIN ACTIONS
+        // ====================================================
         if (payload) {
           if (payload === 'ADMIN_RETURN_AI') {
             await this.memoryService.clearConversation(senderId);
             await this.memoryService.setMode(senderId, 'ai');
             await this.sendMessage(senderId, '🤖 AI რეჟიმი კვლავ ჩართულია.');
-            continue;
+            continue; // Stop here, don't process as text
           }
 
           if (payload === 'ADMIN_KEEP_HUMAN') {
             await this.memoryService.switchToHuman(senderId);
-            // Optional: Confirm to admin/user that mode is human
+            // Optional: You can send a confirmation text here if you want
             // await this.sendMessage(senderId, '✅ საუბარი გრძელდება ოპერატორთან.');
-            continue;
+            continue; // Stop here
           }
+
+          // If it's a button payload we don't recognize, stop anyway so AI doesn't reply to it
+          continue;
         }
 
-        /* ===============================
-          📩 MESSAGE HANDLING
-          =============================== */
-        // If it's just a button click (payload), we stop here so we don't process it as text
-        if (payload) continue;
-
+        // ====================================================
+        // 3. HANDLE REGULAR TEXT MESSAGES
+        // ====================================================
         if (!messaging.message || messaging.message.is_echo) continue;
 
         const text = messaging.message.text;
         if (!text) continue;
 
-        /* ===============================
-          ⏱ AUTO RETURN AFTER 24H
-          =============================== */
+        // Check if 24h passed, reset to AI if needed
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
 
-        // 🛑 HUMAN MODE → BOT SILENT
+        // 🛑 IF HUMAN MODE: Bot stays silent
         if (mode === 'human') continue;
 
+        // 🤖 IF AI MODE: Process the message
         await this.sendSenderAction(senderId, 'typing_on');
 
         try {
           await this.memoryService.addTurn(senderId, 'user', text);
 
-          /* ===============================
-            👤 USER REQUESTS HUMAN
-            =============================== */
+          // Check if user is asking for a human
           if (this.wantsHuman(text)) {
             await this.memoryService.switchToHuman(senderId);
-
             await this.sendMessage(
               senderId,
               'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
-
-            // 🧑‍💼 ADMIN CONTROLS
-            await this.sendAdminButtons(senderId);
+            await this.sendAdminButtons(senderId); // Send the new buttons
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
-          /* ===============================
-            🤖 AI RESPONSE
-            =============================== */
+          // Generate AI Reply
           const mem = await this.memoryService.getOrCreate(senderId);
           const contextMessages = this.buildContextMessages(mem);
 
@@ -165,38 +159,29 @@ export class WebhookController {
             continue;
           }
 
-          /* ===============================
-            🚨 AI → HUMAN HANDOFF
-            =============================== */
+          // Check for Handoff Token from AI
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
-
             await this.sendMessage(
               senderId,
               'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
-
-            // 🧑‍💼 ADMIN CONTROLS
-            await this.sendAdminButtons(senderId);
+            await this.sendAdminButtons(senderId); // Send the new buttons
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
-          /* ===============================
-            ✅ NORMAL AI REPLY
-            =============================== */
+          // Send Normal AI Reply
           await this.sendMessage(senderId, aiReply);
           await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           await this.sendSenderAction(senderId, 'typing_off');
         } catch (err) {
           console.error(err);
-
           await this.memoryService.switchToHuman(senderId);
           await this.sendMessage(
             senderId,
             'დაფიქსირდა შეცდომა. ოპერატორი მალე დაგიკავშირდებათ.',
           );
-
           await this.sendAdminButtons(senderId);
           await this.sendSenderAction(senderId, 'typing_off');
         }
@@ -262,19 +247,25 @@ export class WebhookController {
         recipient: { id: senderId },
         messaging_type: 'RESPONSE',
         message: {
-          text: 'ადმინისტრატორის კონტროლი:',
-          quick_replies: [
-            {
-              content_type: 'text',
-              title: '🔁 AI-ზე დაბრუნება',
-              payload: 'ADMIN_RETURN_AI',
+          attachment: {
+            type: 'template', // <--- This makes it a permanent bubble
+            payload: {
+              template_type: 'button',
+              text: '🔧 ადმინისტრატორის კონტროლი (აირჩიეთ რეჟიმი):',
+              buttons: [
+                {
+                  type: 'postback',
+                  title: '🔁 AI-ზე დაბრუნება',
+                  payload: 'ADMIN_RETURN_AI',
+                },
+                {
+                  type: 'postback',
+                  title: '🧑‍💻 ოპერატორი',
+                  payload: 'ADMIN_KEEP_HUMAN',
+                },
+              ],
             },
-            {
-              content_type: 'text',
-              title: '🧑‍💻 ოპერატორი',
-              payload: 'ADMIN_KEEP_HUMAN',
-            },
-          ],
+          },
         },
       },
       {
