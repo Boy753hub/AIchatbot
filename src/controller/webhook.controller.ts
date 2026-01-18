@@ -73,16 +73,43 @@ export class WebhookController {
   private async processMessage(body: any) {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
+        const senderId = messaging.sender?.id;
+        if (!senderId) continue;
+
+        /* ===============================
+         🧑‍💼 ADMIN BUTTON HANDLING
+         =============================== */
+        if (messaging.postback?.payload) {
+          const payload = messaging.postback.payload;
+
+          if (payload === 'ADMIN_RETURN_AI') {
+            await this.memoryService.clearConversation(senderId);
+            await this.memoryService.setMode(senderId, 'ai');
+
+            await this.sendMessage(senderId, '🤖 AI რეჟიმი კვლავ ჩართულია.');
+            continue;
+          }
+
+          if (payload === 'ADMIN_KEEP_HUMAN') {
+            await this.memoryService.switchToHuman(senderId);
+            continue;
+          }
+        }
+
+        /* ===============================
+         📩 MESSAGE HANDLING
+         =============================== */
         if (!messaging.message || messaging.message.is_echo) continue;
 
-        const senderId = messaging.sender?.id;
-        const text = messaging.message?.text;
-        if (!senderId || !text) continue;
+        const text = messaging.message.text;
+        if (!text) continue;
 
-        // 🔁 AUTO-RETURN CHECK
+        /* ===============================
+         ⏱ AUTO RETURN AFTER 24H
+         =============================== */
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
 
-        // 🛑 Human mode → bot silent
+        // 🛑 HUMAN MODE → BOT SILENT
         if (mode === 'human') continue;
 
         await this.sendSenderAction(senderId, 'typing_on');
@@ -90,6 +117,9 @@ export class WebhookController {
         try {
           await this.memoryService.addTurn(senderId, 'user', text);
 
+          /* ===============================
+           👤 USER REQUESTS HUMAN
+           =============================== */
           if (this.wantsHuman(text)) {
             await this.memoryService.switchToHuman(senderId);
 
@@ -98,10 +128,16 @@ export class WebhookController {
               'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
 
+            // 🧑‍💼 ADMIN CONTROLS
+            await this.sendAdminButtons(senderId);
+
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
+          /* ===============================
+           🤖 AI RESPONSE
+           =============================== */
           const mem = await this.memoryService.getOrCreate(senderId);
           const contextMessages = this.buildContextMessages(mem);
 
@@ -111,9 +147,14 @@ export class WebhookController {
             'ai',
           );
 
-          if (!aiReply) continue;
+          if (!aiReply) {
+            await this.sendSenderAction(senderId, 'typing_off');
+            continue;
+          }
 
-          // 🚨 AI HANDOFF
+          /* ===============================
+           🚨 AI → HUMAN HANDOFF
+           =============================== */
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
 
@@ -122,20 +163,31 @@ export class WebhookController {
               'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
             );
 
+            // 🧑‍💼 ADMIN CONTROLS
+            await this.sendAdminButtons(senderId);
+
             await this.sendSenderAction(senderId, 'typing_off');
             continue;
           }
 
+          /* ===============================
+           ✅ NORMAL AI REPLY
+           =============================== */
           await this.sendMessage(senderId, aiReply);
           await this.memoryService.addTurn(senderId, 'assistant', aiReply);
           await this.sendSenderAction(senderId, 'typing_off');
         } catch (err) {
           console.error(err);
+
           await this.memoryService.switchToHuman(senderId);
           await this.sendMessage(
             senderId,
             'დაფიქსირდა შეცდომა. ოპერატორი მალე დაგიკავშირდებათ.',
           );
+
+          // 🧑‍💼 ADMIN CONTROLS
+          await this.sendAdminButtons(senderId);
+
           await this.sendSenderAction(senderId, 'typing_off');
         }
       }
@@ -188,6 +240,36 @@ export class WebhookController {
         message: { text },
       },
       { params: { access_token: process.env.FB_PAGE_TOKEN } },
+    );
+  }
+
+  private async sendAdminButtons(senderId: string) {
+    const url = `https://graph.facebook.com/v24.0/me/messages`;
+
+    await axios.post(
+      url,
+      {
+        recipient: { id: senderId },
+        messaging_type: 'RESPONSE',
+        message: {
+          text: 'ადმინისტრატორის კონტროლი:',
+          quick_replies: [
+            {
+              content_type: 'text',
+              title: '🔁 AI-ზე დაბრუნება',
+              payload: 'ADMIN_RETURN_AI',
+            },
+            {
+              content_type: 'text',
+              title: '🧑‍💻 ოპერატორი',
+              payload: 'ADMIN_KEEP_HUMAN',
+            },
+          ],
+        },
+      },
+      {
+        params: { access_token: process.env.FB_PAGE_TOKEN },
+      },
     );
   }
 }

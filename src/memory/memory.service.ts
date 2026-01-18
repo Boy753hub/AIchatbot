@@ -14,13 +14,17 @@ export class MemoryService {
   // Create or load memory
   // ===============================
   async getOrCreate(senderId: string): Promise<MemoryDocument> {
-    let mem = await this.memoryModel.findOne({ senderId });
+    let mem = await this.memoryModel.findOne({ senderId }).lean();
 
     if (!mem) {
-      mem = await this.memoryModel.create({ senderId });
+      mem = await this.memoryModel.create({
+        senderId,
+        mode: 'ai',
+        recentMessages: [],
+      });
     }
 
-    return mem;
+    return mem as MemoryDocument;
   }
 
   // ===============================
@@ -35,17 +39,49 @@ export class MemoryService {
           humanSince: new Date(),
         },
       },
+      { upsert: true },
+    );
+  }
+
+  // ===============================
+  // ADMIN: Force AI mode
+  // ===============================
+  async setMode(senderId: string, mode: 'ai' | 'human') {
+    if (mode === 'human') {
+      return this.switchToHuman(senderId);
+    }
+
+    await this.memoryModel.updateOne(
+      { senderId },
+      {
+        $set: { mode: 'ai' },
+        $unset: { humanSince: '' },
+      },
+      { upsert: true },
+    );
+  }
+
+  // ===============================
+  // ADMIN: Clear conversation memory
+  // ===============================
+  async clearConversation(senderId: string) {
+    await this.memoryModel.updateOne(
+      { senderId },
+      {
+        $set: { recentMessages: [] },
+      },
     );
   }
 
   // ===============================
   // Auto-return to AI after 24h
+  // (NO timers – safe for Render)
   // ===============================
   async ensureAiIfExpired(senderId: string): Promise<'ai' | 'human'> {
-    const mem = await this.getOrCreate(senderId);
+    const mem = await this.memoryModel.findOne({ senderId }).lean();
 
-    if (mem.mode !== 'human' || !mem.humanSince) {
-      return mem.mode ?? 'ai';
+    if (!mem || mem.mode !== 'human' || !mem.humanSince) {
+      return 'ai';
     }
 
     const HOURS_24 = 24 * 60 * 60 * 1000;
@@ -67,6 +103,7 @@ export class MemoryService {
 
   // ===============================
   // Save conversation turns
+  // (Hard limit → prevents memory leaks)
   // ===============================
   async addTurn(senderId: string, role: 'user' | 'assistant', content: string) {
     await this.memoryModel.updateOne(
@@ -75,10 +112,11 @@ export class MemoryService {
         $push: {
           recentMessages: {
             $each: [{ role, content }],
-            $slice: -20,
+            $slice: -20, // 🔒 HARD LIMIT
           },
         },
       },
+      { upsert: true },
     );
   }
 }
