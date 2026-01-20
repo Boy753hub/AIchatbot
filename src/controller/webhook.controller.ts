@@ -125,7 +125,7 @@ export class WebhookController {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
               senderId,
-              'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს.',
+              'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს ან დარეკეთ ნომერზე 557200093 ნათია.',
             );
             return;
           }
