@@ -96,7 +96,7 @@ export class WebhookController {
           await this.memoryService.switchToHuman(senderId);
           await this.sendMessage(
             senderId,
-            'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს ან დარეკეთ ნომერზე 557200093 ნათია.',
+            'თქვენი შეტყობინება გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს ან დარეკეთ ნომერზე 557200093, 555286132, 555935860.',
           );
           continue;
         }
@@ -125,7 +125,7 @@ export class WebhookController {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
               senderId,
-              'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს ან დარეკეთ ნომერზე 557200093 ნათია.',
+              'თქვენი კითხვა გადაეცა ოპერატორს. გთხოვთ დაელოდოთ პასუხს ან დარეკეთ ნომერზე 557200093, 555286132, 555935860.',
             );
             return;
           }
