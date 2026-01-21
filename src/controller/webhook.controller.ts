@@ -19,9 +19,6 @@ import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
 import { MemoryService } from 'src/memory/memory.service';
 
-type ChatRole = 'system' | 'user' | 'assistant';
-type ChatMessage = { role: ChatRole; content: string };
-
 @Controller('webhook')
 export class WebhookController {
   private readonly AI_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
@@ -83,15 +80,20 @@ export class WebhookController {
 
         if (!senderId || !text) continue;
 
-        // ===============================
+        // 📢 Ad referral capture
+        if (messaging.referral?.source === 'ADS') {
+          await this.memoryService.saveAdContext(senderId, {
+            adId: messaging.referral.ad_id,
+            adTitle: messaging.referral.ad_title,
+            adProduct: messaging.referral.ad_context_data?.product_id,
+          });
+        }
+
         // 🔁 Auto-return to AI after 24h
-        // ===============================
         const mode = await this.memoryService.ensureAiIfExpired(senderId);
         if (mode === 'human') continue;
 
-        // ===============================
-        // 🔍 Keyword-based human request
-        // ===============================
+        // 🔍 User explicitly wants human
         if (this.wantsHuman(text)) {
           await this.memoryService.switchToHuman(senderId);
           await this.sendMessage(
@@ -104,23 +106,23 @@ export class WebhookController {
         await this.sendSenderAction(senderId, 'typing_on');
 
         try {
-          // Save user message
           await this.memoryService.addTurn(senderId, 'user', text);
 
           const mem = await this.memoryService.getOrCreate(senderId);
-          const contextMessages = this.buildContextMessages(mem);
 
           const aiReply = await this.aiService.getCompletion(
             text,
-            contextMessages,
-            'ai',
+            {
+              adTitle: mem.adTitle,
+              adProduct: mem.adProduct,
+              recentMessages: mem.recentMessages,
+            },
+            mem.mode,
           );
 
           if (!aiReply) return;
 
-          // ===============================
           // 🚨 AI-requested handoff
-          // ===============================
           if (aiReply.trim() === this.AI_HANDOFF_TOKEN) {
             await this.memoryService.switchToHuman(senderId);
             await this.sendMessage(
@@ -130,7 +132,6 @@ export class WebhookController {
             return;
           }
 
-          // Normal AI reply
           await this.sendMessage(senderId, aiReply);
           await this.memoryService.addTurn(senderId, 'assistant', aiReply);
         } catch (err) {
@@ -145,25 +146,6 @@ export class WebhookController {
   // ===============================
   // Helpers
   // ===============================
-  private buildContextMessages(mem: any): ChatMessage[] {
-    const context: ChatMessage[] = [];
-
-    if (mem?.summary?.trim()) {
-      context.push({
-        role: 'system',
-        content: `MEMORY SUMMARY (use as context):\n${mem.summary}`,
-      });
-    }
-
-    for (const m of mem?.recentMessages || []) {
-      if (m?.content && (m.role === 'user' || m.role === 'assistant')) {
-        context.push({ role: m.role, content: m.content });
-      }
-    }
-
-    return context;
-  }
-
   private wantsHuman(text: string): boolean {
     const lower = text.toLowerCase();
     return this.HUMAN_KEYWORDS.some((k) => lower.includes(k));

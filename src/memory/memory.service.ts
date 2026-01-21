@@ -119,4 +119,20 @@ export class MemoryService {
       { upsert: true },
     );
   }
+
+  async saveAdContext(
+    senderId: string,
+    ad: { adId?: string; adTitle?: string; adProduct?: string },
+  ) {
+    await this.memoryModel.updateOne(
+      { senderId },
+      {
+        $set: {
+          adId: ad.adId,
+          adTitle: ad.adTitle,
+          adProduct: ad.adProduct,
+        },
+      },
+    );
+  }
 }

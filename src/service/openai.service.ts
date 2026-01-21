@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 
@@ -31,13 +32,51 @@ Prices:
 - პოლიურეთანის ჰიდროიზოლაცია: 5კგ(185ლ/5-6მ²), 25კგ(678ლ/27-29მ²)
 - სარეცხი საღებავი: 3კგ(37ლ/18მ²), 10კგ(89ლ/56მ²), 17.5კგ(149ლ/100მ²)
 - ანტიკოროზიული: თეთრი, ნაცრისფერი, აგურისფერი, მწვანე, ლურჯი, შავი, ყავისფერი.
-- ინტერიერის და ფასადის წმენდვადი საღებავი თვისებები: ნესტგამძლე, ანტიბაქტერიული, ელასტიური (ფარავს ბზარებს). 3კგ (18მ²) — 37ლ,10კგ (56მ²) — 89ლ,17.5კგ (100მ²) — 149ლ
-- კაფელ-მეტლახის საღებავი: • 1ლ (3-4მ²) - 82ლ • 2.5ლ (7-8მ²) - 186ლ • თეთრი (პიგმენტით ფერადდება) • შრობა 3-4სთ, წყალთან კონტაქტი 24სთ-ში
+- ინტერიერის და ფასადის წმენდვადი საღებავი თვისებები: ნესტგამძლე, ანტიბაქტერიული, ელასტიური (ფარავს ბზარებს). 
 Website: drouli.ge
 მისამართი: სანზონა, სანზონის დასახლება კორპუსი 6.
 Outside info -> HANDOFF.`,
     },
   ];
+
+  // ===============================
+  // 🧠 CONTEXT BUILDER (Ad + Memory)
+  // ===============================
+  private buildContextMessages(mem?: {
+    adTitle?: string;
+    adProduct?: string;
+    recentMessages?: { role: 'user' | 'assistant'; content: string }[];
+  }): ChatMessage[] {
+    const messages: ChatMessage[] = [];
+
+    // 📢 Ad context (hidden from user)
+    if (mem?.adTitle || mem?.adProduct) {
+      messages.push({
+        role: 'system',
+        content: `
+The user started this conversation from a Facebook advertisement.
+
+Ad title: ${mem.adTitle ?? 'Unknown'}
+Ad product reference: ${mem.adProduct ?? 'Unknown'}
+
+Use this information to answer more accurately.
+Do NOT mention advertisements unless the user explicitly asks.
+        `.trim(),
+      });
+    }
+
+    // 🧠 Recent conversation (limited memory)
+    for (const m of mem?.recentMessages || []) {
+      if (m?.content) {
+        messages.push({
+          role: m.role,
+          content: m.content,
+        });
+      }
+    }
+
+    return messages;
+  }
 
   // ===============================
   // 🔍 FOREIGN WORD FILTER
@@ -69,7 +108,7 @@ Outside info -> HANDOFF.`,
       {
         model: 'gpt-4o',
         messages,
-        temperature: 0.4, // lower = safer
+        temperature: 0.4,
       },
       {
         headers: {
@@ -91,10 +130,16 @@ Outside info -> HANDOFF.`,
   // ===============================
   async getCompletion(
     userText: string,
-    contextMessages: ChatMessage[] = [],
+    mem?: {
+      adTitle?: string;
+      adProduct?: string;
+      recentMessages?: { role: 'user' | 'assistant'; content: string }[];
+    },
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _mode: string,
+    _mode?: string,
   ): Promise<string> {
+    const contextMessages = this.buildContextMessages(mem);
+
     let reply = await this.callOpenAI([
       ...this.SYSTEM_MESSAGES,
       ...contextMessages,
@@ -106,7 +151,7 @@ Outside info -> HANDOFF.`,
       return reply;
     }
 
-    // 🧹 Language cleanup (safe)
+    // 🧹 Language cleanup
     if (this.containsForeignWords(reply)) {
       reply = await this.callOpenAI([
         {

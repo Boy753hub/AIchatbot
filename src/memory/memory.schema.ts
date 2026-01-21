@@ -27,6 +27,16 @@ export class Memory {
     default: [],
   })
   recentMessages: { role: 'user' | 'assistant'; content: string }[];
+
+  // 🆕 Ad context
+  @Prop()
+  adId?: string;
+
+  @Prop()
+  adTitle?: string;
+
+  @Prop()
+  adProduct?: string;
 }
 
 export const MemorySchema = SchemaFactory.createForClass(Memory);
