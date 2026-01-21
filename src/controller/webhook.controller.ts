@@ -74,7 +74,8 @@ export class WebhookController {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
         if (!messaging.message || messaging.message.is_echo) continue;
-
+        console.log('Received message:', JSON.stringify(messaging));
+        console.log('Full entry data:', JSON.stringify(entry));
         const senderId = messaging.sender?.id;
         const text = messaging.message?.text;
 
