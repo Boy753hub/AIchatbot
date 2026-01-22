@@ -166,16 +166,14 @@ export class WebhookController {
 
             if (!aiReply) continue;
 
-            // 🚨 AI-requested handoff
-            if (
-              aiReply.trim() ===
-              (company.handoffToken ?? '__HANDOFF_TO_HUMAN__')
-            ) {
+            // 🚨 AI-requested handoff (robust)
+            const handoffToken = company.handoffToken ?? '__HANDOFF_TO_HUMAN__';
+
+            if (this.looksLikeHandoff(aiReply, handoffToken)) {
               await this.memoryService.switchToHuman(pageId, senderId);
 
               const handoffMsg =
                 company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
-
               await this.sendMessage(company, senderId, handoffMsg);
               continue;
             }
@@ -205,6 +203,23 @@ export class WebhookController {
   private wantsHuman(text: string): boolean {
     const lower = text.toLowerCase();
     return this.HUMAN_KEYWORDS.some((k) => lower.includes(k));
+  }
+
+  private normalizeForTokenCheck(s: string): string {
+    return (s || '').replace(/\s+/g, '').toUpperCase();
+  }
+
+  private looksLikeHandoff(reply: string, handoffToken: string): boolean {
+    const r = this.normalizeForTokenCheck(reply);
+    const t = this.normalizeForTokenCheck(handoffToken);
+
+    // exact or embedded
+    if (r.includes(t)) return true;
+
+    // tolerate single-underscore variants like _HANDOFF_TO_HUMAN_
+    if (r.includes('HANDOFF_TO_HUMAN')) return true;
+
+    return false;
   }
 
   /**
