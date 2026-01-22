@@ -4,6 +4,7 @@ import { OpenaiService } from './service/openai.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MemoryModule } from './memory/memory.module';
 import { ConfigModule } from '@nestjs/config';
+import { CompanyModule } from './company/company.module';
 
 @Module({
   imports: [
@@ -17,6 +18,8 @@ import { ConfigModule } from '@nestjs/config';
     MongooseModule.forRoot(process.env.MONGO_URL!),
 
     MemoryModule,
+
+    CompanyModule,
   ],
   controllers: [WebhookController],
   providers: [OpenaiService],

@@ -5,7 +5,11 @@ export type MemoryDocument = Memory & Document;
 
 @Schema({ timestamps: true })
 export class Memory {
-  @Prop({ required: true, unique: true })
+  // Tenant / Page scope (critical for multi-company)
+  @Prop({ required: true })
+  pageId: string;
+
+  @Prop({ required: true })
   senderId: string;
 
   @Prop({ default: 'ai' })
@@ -28,7 +32,11 @@ export class Memory {
   })
   recentMessages: { role: 'user' | 'assistant'; content: string }[];
 
-  // 🆕 Ad context
+  // Optional: message dedupe to avoid double replies
+  @Prop({ type: [String], default: [] })
+  processedMids: string[];
+
+  // Ad context
   @Prop()
   adId?: string;
 
@@ -40,3 +48,6 @@ export class Memory {
 }
 
 export const MemorySchema = SchemaFactory.createForClass(Memory);
+
+// ✅ Multi-tenant uniqueness
+MemorySchema.index({ pageId: 1, senderId: 1 }, { unique: true });

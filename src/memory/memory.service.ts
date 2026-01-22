@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -13,26 +14,37 @@ export class MemoryService {
   // ===============================
   // Create or load memory
   // ===============================
-  async getOrCreate(senderId: string): Promise<MemoryDocument> {
-    let mem = await this.memoryModel.findOne({ senderId }).lean();
+  async getOrCreate(pageId: string, senderId: string): Promise<MemoryDocument> {
+    // Try read first
+    const existing = await this.memoryModel.findOne({ pageId, senderId });
+    if (existing) return existing;
 
-    if (!mem) {
-      mem = await this.memoryModel.create({
+    // Create if missing (safe with unique compound index)
+    // If race condition happens, catch duplicate key and re-read.
+    try {
+      return await this.memoryModel.create({
+        pageId,
         senderId,
         mode: 'ai',
         recentMessages: [],
+        processedMids: [],
       });
+    } catch (err: any) {
+      // Duplicate key -> created by another request; fetch it
+      if (err?.code === 11000) {
+        const mem = await this.memoryModel.findOne({ pageId, senderId });
+        if (mem) return mem;
+      }
+      throw err;
     }
-
-    return mem as MemoryDocument;
   }
 
   // ===============================
   // Switch to HUMAN mode
   // ===============================
-  async switchToHuman(senderId: string) {
+  async switchToHuman(pageId: string, senderId: string) {
     await this.memoryModel.updateOne(
-      { senderId },
+      { pageId, senderId },
       {
         $set: {
           mode: 'human',
@@ -44,15 +56,15 @@ export class MemoryService {
   }
 
   // ===============================
-  // ADMIN: Force AI mode
+  // ADMIN: Force AI/HUMAN mode
   // ===============================
-  async setMode(senderId: string, mode: 'ai' | 'human') {
+  async setMode(pageId: string, senderId: string, mode: 'ai' | 'human') {
     if (mode === 'human') {
-      return this.switchToHuman(senderId);
+      return this.switchToHuman(pageId, senderId);
     }
 
     await this.memoryModel.updateOne(
-      { senderId },
+      { pageId, senderId },
       {
         $set: { mode: 'ai' },
         $unset: { humanSince: '' },
@@ -64,12 +76,13 @@ export class MemoryService {
   // ===============================
   // ADMIN: Clear conversation memory
   // ===============================
-  async clearConversation(senderId: string) {
+  async clearConversation(pageId: string, senderId: string) {
     await this.memoryModel.updateOne(
-      { senderId },
+      { pageId, senderId },
       {
         $set: { recentMessages: [] },
       },
+      { upsert: true },
     );
   }
 
@@ -77,8 +90,11 @@ export class MemoryService {
   // Auto-return to AI after 24h
   // (NO timers – safe for Render)
   // ===============================
-  async ensureAiIfExpired(senderId: string): Promise<'ai' | 'human'> {
-    const mem = await this.memoryModel.findOne({ senderId }).lean();
+  async ensureAiIfExpired(
+    pageId: string,
+    senderId: string,
+  ): Promise<'ai' | 'human'> {
+    const mem = await this.memoryModel.findOne({ pageId, senderId }).lean();
 
     if (!mem || mem.mode !== 'human' || !mem.humanSince) {
       return 'ai';
@@ -89,7 +105,7 @@ export class MemoryService {
 
     if (expired) {
       await this.memoryModel.updateOne(
-        { senderId },
+        { pageId, senderId },
         {
           $set: { mode: 'ai' },
           $unset: { humanSince: '' },
@@ -105,9 +121,14 @@ export class MemoryService {
   // Save conversation turns
   // (Hard limit → prevents memory leaks)
   // ===============================
-  async addTurn(senderId: string, role: 'user' | 'assistant', content: string) {
+  async addTurn(
+    pageId: string,
+    senderId: string,
+    role: 'user' | 'assistant',
+    content: string,
+  ) {
     await this.memoryModel.updateOne(
-      { senderId },
+      { pageId, senderId },
       {
         $push: {
           recentMessages: {
@@ -120,12 +141,16 @@ export class MemoryService {
     );
   }
 
+  // ===============================
+  // Save Ad context
+  // ===============================
   async saveAdContext(
+    pageId: string,
     senderId: string,
     ad: { adId?: string; adTitle?: string; adProduct?: string },
   ) {
     await this.memoryModel.updateOne(
-      { senderId },
+      { pageId, senderId },
       {
         $set: {
           adId: ad.adId,
@@ -133,6 +158,39 @@ export class MemoryService {
           adProduct: ad.adProduct,
         },
       },
+      { upsert: true },
+    );
+  }
+
+  // ===============================
+  // Message dedupe (optional but recommended)
+  // ===============================
+  async hasProcessedMid(
+    pageId: string,
+    senderId: string,
+    mid: string,
+  ): Promise<boolean> {
+    const found = await this.memoryModel
+      .findOne({ pageId, senderId, processedMids: mid })
+      .select({ _id: 1 })
+      .lean();
+
+    return !!found;
+  }
+
+  async markProcessedMid(pageId: string, senderId: string, mid: string) {
+    // Keep last 200 message ids to prevent doc bloat
+    await this.memoryModel.updateOne(
+      { pageId, senderId },
+      {
+        $push: {
+          processedMids: {
+            $each: [mid],
+            $slice: -200,
+          },
+        },
+      },
+      { upsert: true },
     );
   }
 }
