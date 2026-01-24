@@ -40,6 +40,23 @@ export class WebhookController {
     'ნამდვილ კაცს დამალაპარაკეთ',
   ];
 
+  // ===============================
+  // Debounce / batching (NEW)
+  // ===============================
+  private readonly DEBOUNCE_MS = 1200;
+
+  private pending = new Map<
+    string,
+    {
+      pageId: string;
+      senderId: string;
+      company: any;
+      texts: string[];
+      timer?: NodeJS.Timeout;
+      typingOnSent: boolean;
+    }
+  >();
+
   constructor(
     private readonly aiService: OpenaiService,
     private readonly memoryService: MemoryService,
@@ -93,12 +110,10 @@ export class WebhookController {
           if (!pageId || !senderId || !text) continue;
 
           // ✅ Resolve company config for this page
-          // You control what lives in company config: prompt, model, phone, handoff msg, etc.
           let company: any;
           try {
             company = await this.companyService.getByPageId(pageId);
           } catch {
-            // If you haven't onboarded this page yet, ignore or respond with a default message
             console.warn(`No company configured for pageId=${pageId}`);
             continue;
           }
@@ -132,6 +147,9 @@ export class WebhookController {
 
           // 🔍 User explicitly wants human
           if (this.wantsHuman(text)) {
+            // If they typed human keyword, cancel any pending debounce burst
+            this.cancelPending(pageId, senderId);
+
             await this.memoryService.switchToHuman(pageId, senderId);
 
             const handoffMsg =
@@ -141,59 +159,138 @@ export class WebhookController {
             continue;
           }
 
-          await this.sendSenderAction(company, senderId, 'typing_on');
-
-          try {
-            await this.memoryService.addTurn(pageId, senderId, 'user', text);
-
-            const mem = await this.memoryService.getOrCreate(pageId, senderId);
-
-            const aiReply = await this.aiService.getCompletion({
-              company: {
-                systemPrompt: company.systemPrompt,
-                model: company.model ?? 'gpt-4o',
-                temperature: company.temperature ?? 0.4,
-                forbiddenWords: company.forbiddenWords ?? [],
-                handoffToken: company.handoffToken ?? '__HANDOFF_TO_HUMAN__',
-              },
-              userText: text,
-              mem: {
-                adTitle: mem.adTitle,
-                adProduct: mem.adProduct,
-                recentMessages: mem.recentMessages,
-              },
-            });
-
-            if (!aiReply) continue;
-
-            // 🚨 AI-requested handoff (robust)
-            const handoffToken = company.handoffToken ?? '__HANDOFF_TO_HUMAN__';
-
-            if (this.looksLikeHandoff(aiReply, handoffToken)) {
-              await this.memoryService.switchToHuman(pageId, senderId);
-
-              const handoffMsg =
-                company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
-              await this.sendMessage(company, senderId, handoffMsg);
-              continue;
-            }
-
-            await this.sendMessage(company, senderId, aiReply);
-            await this.memoryService.addTurn(
-              pageId,
-              senderId,
-              'assistant',
-              aiReply,
-            );
-          } catch (err) {
-            console.error('AI Processing Error:', err?.message || err);
-          } finally {
-            await this.sendSenderAction(company, senderId, 'typing_off');
-          }
+          // ✅ Debounce: batch multiple fast messages into ONE OpenAI call
+          this.enqueueDebouncedMessage(company, pageId, senderId, text);
         } catch (err) {
           console.error('Webhook loop error:', err?.message || err);
         }
       }
+    }
+  }
+
+  // ===============================
+  // Debounce helpers (NEW)
+  // ===============================
+  private key(pageId: string, senderId: string) {
+    return `${pageId}:${senderId}`;
+  }
+
+  private cancelPending(pageId: string, senderId: string) {
+    const k = this.key(pageId, senderId);
+    const entry = this.pending.get(k);
+    if (!entry) return;
+
+    if (entry.timer) clearTimeout(entry.timer);
+    this.pending.delete(k);
+  }
+
+  private enqueueDebouncedMessage(
+    company: any,
+    pageId: string,
+    senderId: string,
+    text: string,
+  ) {
+    const k = this.key(pageId, senderId);
+    let entry = this.pending.get(k);
+
+    if (!entry) {
+      entry = {
+        pageId,
+        senderId,
+        company,
+        texts: [],
+        typingOnSent: false,
+      };
+      this.pending.set(k, entry);
+    }
+
+    // Always keep latest company config
+    entry.company = company;
+
+    // Store chunk
+    entry.texts.push(text);
+
+    // Send typing_on once per burst
+    if (!entry.typingOnSent) {
+      entry.typingOnSent = true;
+      this.sendSenderAction(company, senderId, 'typing_on').catch(() => {});
+    }
+
+    // Reset timer
+    if (entry.timer) clearTimeout(entry.timer);
+
+    entry.timer = setTimeout(() => {
+      this.flushDebouncedMessages(k).catch((err) => {
+        console.error('Debounce flush error:', err?.message || err);
+      });
+    }, this.DEBOUNCE_MS);
+  }
+
+  private async flushDebouncedMessages(k: string) {
+    const entry = this.pending.get(k);
+    if (!entry) return;
+
+    // Remove early to prevent double flush
+    this.pending.delete(k);
+
+    const { company, pageId, senderId, texts } = entry;
+
+    const combinedText = texts
+      .map((t) => (t || '').trim())
+      .filter(Boolean)
+      .join('\n');
+
+    if (!combinedText) {
+      await this.sendSenderAction(company, senderId, 'typing_off');
+      return;
+    }
+
+    try {
+      // Re-check human mode right before calling AI
+      const mode = await this.memoryService.ensureAiIfExpired(pageId, senderId);
+      if (mode === 'human') return;
+
+      // Save ONE user turn (batched)
+      await this.memoryService.addTurn(pageId, senderId, 'user', combinedText);
+
+      const mem = await this.memoryService.getOrCreate(pageId, senderId);
+
+      const aiReply = await this.aiService.getCompletion({
+        company: {
+          systemPrompt: company.systemPrompt,
+          model: company.model ?? 'gpt-4o',
+          temperature: company.temperature ?? 0.4,
+          forbiddenWords: company.forbiddenWords ?? [],
+          handoffToken: company.handoffToken ?? '__HANDOFF_TO_HUMAN__',
+        },
+        userText: combinedText,
+        mem: {
+          adTitle: mem.adTitle,
+          adProduct: mem.adProduct,
+          recentMessages: mem.recentMessages,
+        },
+      });
+
+      if (!aiReply) return;
+
+      // 🚨 AI-requested handoff (robust)
+      const handoffToken = company.handoffToken ?? '__HANDOFF_TO_HUMAN__';
+
+      if (this.looksLikeHandoff(aiReply, handoffToken)) {
+        await this.memoryService.switchToHuman(pageId, senderId);
+
+        const handoffMsg =
+          company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
+        await this.sendMessage(company, senderId, handoffMsg);
+        return;
+      }
+
+      await this.sendMessage(company, senderId, aiReply);
+      await this.memoryService.addTurn(pageId, senderId, 'assistant', aiReply);
+    } catch (err: any) {
+      console.error('AI Processing Error (debounced):', err?.message || err);
+    } finally {
+      await this.sendSenderAction(company, senderId, 'typing_off');
     }
   }
 
