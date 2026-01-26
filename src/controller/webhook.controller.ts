@@ -19,6 +19,7 @@ import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
 import { MemoryService } from 'src/memory/memory.service';
 import { CompanyService } from 'src/company/company.service';
+import { SupportNotificationService } from 'src/notify/support-notification.service';
 
 @Controller('webhook')
 export class WebhookController {
@@ -61,6 +62,7 @@ export class WebhookController {
     private readonly aiService: OpenaiService,
     private readonly memoryService: MemoryService,
     private readonly companyService: CompanyService,
+    private readonly supportNotify: SupportNotificationService,
   ) {}
 
   // ===============================
@@ -151,6 +153,19 @@ export class WebhookController {
             this.cancelPending(pageId, senderId);
 
             await this.memoryService.switchToHuman(pageId, senderId);
+
+            const mem = await this.memoryService.getOrCreate(pageId, senderId);
+            const profile = await this.fetchFbUserProfile(company, senderId);
+
+            await this.supportNotify.notifyHumanHandoff({
+              company,
+              pageId,
+              senderId,
+              reason: 'keyword',
+              userProfile: profile ?? undefined,
+              lastUserText: text,
+              ad: { adTitle: mem.adTitle, adProduct: mem.adProduct },
+            });
 
             const handoffMsg =
               company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
@@ -278,7 +293,17 @@ export class WebhookController {
 
       if (this.looksLikeHandoff(aiReply, handoffToken)) {
         await this.memoryService.switchToHuman(pageId, senderId);
+        const profile = await this.fetchFbUserProfile(company, senderId);
 
+        await this.supportNotify.notifyHumanHandoff({
+          company,
+          pageId,
+          senderId,
+          reason: 'ai_handoff',
+          userProfile: profile ?? undefined,
+          lastUserText: combinedText, // your debounced multi-line user input
+          ad: { adTitle: mem.adTitle, adProduct: mem.adProduct },
+        });
         const handoffMsg =
           company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
         await this.sendMessage(company, senderId, handoffMsg);
@@ -376,6 +401,38 @@ export class WebhookController {
         'SendMessage Error:',
         error?.response?.data || error?.message,
       );
+    }
+  }
+  private async fetchFbUserProfile(
+    company: any,
+    senderId: string,
+  ): Promise<{
+    first_name?: string;
+    last_name?: string;
+    profile_pic?: string;
+  } | null> {
+    const accessToken = company?.fbPageToken || process.env.FB_PAGE_TOKEN;
+    if (!accessToken) return null;
+
+    try {
+      const res = await axios.get(
+        `https://graph.facebook.com/${this.FB_API_VERSION}/${senderId}`,
+        {
+          params: {
+            access_token: accessToken,
+            fields: 'first_name,last_name,profile_pic',
+          },
+        },
+      );
+
+      return res.data ?? null;
+    } catch (err: any) {
+      // Don't block handoff if FB profile fetch fails
+      console.warn(
+        'fetchFbUserProfile failed:',
+        err?.response?.data || err?.message,
+      );
+      return null;
     }
   }
 }

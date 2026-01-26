@@ -5,6 +5,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { MemoryModule } from './memory/memory.module';
 import { ConfigModule } from '@nestjs/config';
 import { CompanyModule } from './company/company.module';
+import { NotifyModule } from './notify/notify.module';
 
 @Module({
   imports: [
@@ -18,8 +19,8 @@ import { CompanyModule } from './company/company.module';
     MongooseModule.forRoot(process.env.MONGO_URL!),
 
     MemoryModule,
-
     CompanyModule,
+    NotifyModule,
   ],
   controllers: [WebhookController],
   providers: [OpenaiService],

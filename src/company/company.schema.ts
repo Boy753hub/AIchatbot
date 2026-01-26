@@ -49,6 +49,11 @@ export class Company {
   // Optional: disable company without removing it
   @Prop({ default: true })
   isActive: boolean;
+  @Prop({ default: false })
+  supportNotifyEnabled: boolean;
+
+  @Prop()
+  slackWebhookUrl?: string;
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);
