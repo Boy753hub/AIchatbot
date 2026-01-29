@@ -126,6 +126,10 @@ export class WebhookController {
               senderId,
               ad,
             });
+            console.log(
+              'RAW REFERRAL:',
+              messaging.referral || messaging.postback?.referral,
+            );
 
             await this.memoryService.saveAdContext(pageId, senderId, ad);
           } else if (
