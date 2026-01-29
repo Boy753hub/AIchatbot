@@ -98,19 +98,14 @@ export class WebhookController {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
         try {
-          if (!messaging.message || messaging.message.is_echo) continue;
-
+          // ✅ Identify tenant + sender ASAP (works for message/postback/referral)
           const senderId = messaging.sender?.id as string | undefined;
-          const text = messaging.message?.text as string | undefined;
 
-          // ✅ Identify which FB page received the message (tenant key)
           const pageId =
             (messaging.recipient?.id as string | undefined) ||
             (entry.id as string | undefined);
 
-          const mid = messaging.message?.mid as string | undefined;
-
-          if (!pageId || !senderId || !text) continue;
+          if (!pageId || !senderId) continue;
 
           // ✅ Resolve company config for this page
           let company: any;
@@ -120,6 +115,41 @@ export class WebhookController {
             console.warn(`No company configured for pageId=${pageId}`);
             continue;
           }
+
+          // ✅ Capture ad referral even if there's NO text message
+          // ✅ Capture ad referral even if there's NO text message
+          const ad = this.extractAdReferral(messaging);
+
+          if (ad) {
+            console.log('✅ AD CAPTURED', {
+              pageId,
+              senderId,
+              ad,
+            });
+
+            await this.memoryService.saveAdContext(pageId, senderId, ad);
+          } else if (
+            messaging?.referral ||
+            messaging?.postback?.referral ||
+            messaging?.message?.referral
+          ) {
+            console.log('⚠️ REFERRAL PRESENT BUT NOT RECOGNIZED AS AD', {
+              pageId,
+              senderId,
+              referral:
+                messaging.referral ||
+                messaging.postback?.referral ||
+                messaging.message?.referral,
+            });
+          }
+
+          // ✅ Now ignore anything that is not a real user text message
+          if (!messaging.message || messaging.message.is_echo) continue;
+
+          const text = messaging.message?.text as string | undefined;
+          const mid = messaging.message?.mid as string | undefined;
+
+          if (!text) continue;
 
           // ✅ Message dedupe (prevents double replies)
           if (mid) {
@@ -132,15 +162,6 @@ export class WebhookController {
             await this.memoryService.markProcessedMid?.(pageId, senderId, mid);
           }
 
-          // 📢 Ad referral capture (tenant-scoped)
-          if (messaging.referral?.source === 'ADS') {
-            await this.memoryService.saveAdContext(pageId, senderId, {
-              adId: messaging.referral.ad_id,
-              adTitle: messaging.referral.ad_title,
-              adProduct: messaging.referral.ad_context_data?.product_id,
-            });
-          }
-
           // 🔁 Auto-return to AI after 24h (tenant-scoped)
           const mode = await this.memoryService.ensureAiIfExpired(
             pageId,
@@ -150,7 +171,7 @@ export class WebhookController {
 
           // 🔍 User explicitly wants human
           if (this.wantsHuman(text)) {
-            // If they typed human keyword, cancel any pending debounce burst
+            // cancel any pending debounce burst
             this.cancelPending(pageId, senderId);
 
             await this.memoryService.switchToHuman(pageId, senderId);
@@ -169,14 +190,13 @@ export class WebhookController {
             });
 
             const handoffMsg = this.getTimedHandoffMessage(company);
-
             await this.sendMessage(company, senderId, handoffMsg);
             continue;
           }
 
           // ✅ Debounce: batch multiple fast messages into ONE OpenAI call
           this.enqueueDebouncedMessage(company, pageId, senderId, text);
-        } catch (err) {
+        } catch (err: any) {
           console.error('Webhook loop error:', err?.message || err);
         }
       }
@@ -476,5 +496,28 @@ export class WebhookController {
     }
 
     return fallback;
+  }
+  private extractAdReferral(messaging: any): {
+    adId?: string;
+    adTitle?: string;
+    adProduct?: string;
+  } | null {
+    const r =
+      messaging?.referral ||
+      messaging?.postback?.referral ||
+      messaging?.message?.referral;
+
+    if (!r) return null;
+
+    const source = String(r.source || '').toUpperCase();
+    const looksLikeAd = source === 'ADS' || !!r.ad_id;
+
+    if (!looksLikeAd) return null;
+
+    return {
+      adId: r.ad_id,
+      adTitle: r.ad_title,
+      adProduct: r.ad_context_data?.product_id,
+    };
   }
 }
