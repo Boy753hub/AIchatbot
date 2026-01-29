@@ -54,6 +54,21 @@ export class Company {
 
   @Prop()
   slackWebhookUrl?: string;
+  @Prop({ default: 'Asia/Tbilisi' })
+  timezone: string;
+
+  // Time-based handoff message rules
+  @Prop({
+    type: [
+      {
+        start: { type: String }, // "09:00"
+        end: { type: String }, // "19:00"
+        message: { type: String },
+      },
+    ],
+    default: [],
+  })
+  handoffSchedule: { start: string; end: string; message: string }[];
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);

@@ -14,6 +14,7 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
+import { DateTime } from 'luxon';
 import axios from 'axios';
 import express from 'express';
 import { OpenaiService } from 'src/service/openai.service';
@@ -167,8 +168,7 @@ export class WebhookController {
               ad: { adTitle: mem.adTitle, adProduct: mem.adProduct },
             });
 
-            const handoffMsg =
-              company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
+            const handoffMsg = this.getTimedHandoffMessage(company);
 
             await this.sendMessage(company, senderId, handoffMsg);
             continue;
@@ -304,8 +304,7 @@ export class WebhookController {
           lastUserText: combinedText, // your debounced multi-line user input
           ad: { adTitle: mem.adTitle, adProduct: mem.adProduct },
         });
-        const handoffMsg =
-          company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
+        const handoffMsg = this.getTimedHandoffMessage(company);
         await this.sendMessage(company, senderId, handoffMsg);
         return;
       }
@@ -434,5 +433,48 @@ export class WebhookController {
       );
       return null;
     }
+  }
+  private toMinutes(hhmm: string): number | null {
+    const m = /^(\d{2}):(\d{2})$/.exec((hhmm || '').trim());
+    if (!m) return null;
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return hh * 60 + mm;
+  }
+
+  private isInWindow(
+    nowMin: number,
+    startMin: number,
+    endMin: number,
+  ): boolean {
+    // normal window e.g. 09:00-19:00
+    if (startMin <= endMin) return nowMin >= startMin && nowMin < endMin;
+
+    // overnight window e.g. 19:00-02:00
+    return nowMin >= startMin || nowMin < endMin;
+  }
+
+  private getTimedHandoffMessage(company: any): string {
+    const fallback = company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
+
+    const tz = company?.timezone || 'Asia/Tbilisi';
+    const now = DateTime.now().setZone(tz);
+    const nowMin = now.hour * 60 + now.minute;
+
+    const schedule = Array.isArray(company?.handoffSchedule)
+      ? company.handoffSchedule
+      : [];
+
+    for (const rule of schedule) {
+      const startMin = this.toMinutes(rule?.start);
+      const endMin = this.toMinutes(rule?.end);
+      const msg = (rule?.message || '').trim();
+
+      if (startMin === null || endMin === null || !msg) continue;
+      if (this.isInWindow(nowMin, startMin, endMin)) return msg;
+    }
+
+    return fallback;
   }
 }
