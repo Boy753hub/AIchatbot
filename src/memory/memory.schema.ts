@@ -45,6 +45,12 @@ export class Memory {
 
   @Prop()
   adProduct?: string;
+
+  @Prop()
+  adDescription?: string;
+
+  @Prop({ type: [String], default: [] })
+  adTags?: string[];
 }
 
 export const MemorySchema = SchemaFactory.createForClass(Memory);

@@ -28,12 +28,23 @@ export class OpenaiService {
   private buildContextMessages(mem?: {
     adTitle?: string;
     adProduct?: string;
+    adDescription?: string;
+    adTags?: string[];
     recentMessages?: { role: 'user' | 'assistant'; content: string }[];
   }): ChatMessage[] {
     const messages: ChatMessage[] = [];
 
-    // 📢 Ad context (hidden from user)
-    if (mem?.adTitle || mem?.adProduct) {
+    // ✅ EARLY EXIT — fixes TS error cleanly
+    if (!mem) {
+      return messages;
+    }
+
+    if (
+      mem.adTitle ||
+      mem.adProduct ||
+      mem.adDescription ||
+      (Array.isArray(mem.adTags) && mem.adTags.length > 0)
+    ) {
       messages.push({
         role: 'system',
         content: `
@@ -41,15 +52,20 @@ The user started this conversation from a Facebook advertisement.
 
 Ad title: ${mem.adTitle ?? 'Unknown'}
 Ad product reference: ${mem.adProduct ?? 'Unknown'}
+Ad description: ${mem.adDescription ?? 'Unknown'}
+Ad tags: ${
+          Array.isArray(mem.adTags) && mem.adTags.length
+            ? mem.adTags.join(', ')
+            : 'None'
+        }
 
 Use this information to answer more accurately.
 Do NOT mention advertisements unless the user explicitly asks.
-        `.trim(),
+      `.trim(),
       });
     }
 
-    // 🧠 Recent conversation (limited memory)
-    for (const m of mem?.recentMessages || []) {
+    for (const m of mem.recentMessages || []) {
       if (m?.content) {
         messages.push({ role: m.role, content: m.content });
       }
@@ -113,6 +129,8 @@ Do NOT mention advertisements unless the user explicitly asks.
     mem?: {
       adTitle?: string;
       adProduct?: string;
+      adDescription?: string;
+      adTags?: string[];
       recentMessages?: { role: 'user' | 'assistant'; content: string }[];
     };
   }): Promise<string> {

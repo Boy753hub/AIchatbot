@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
@@ -21,6 +22,7 @@ import { OpenaiService } from 'src/service/openai.service';
 import { MemoryService } from 'src/memory/memory.service';
 import { CompanyService } from 'src/company/company.service';
 import { SupportNotificationService } from 'src/notify/support-notification.service';
+import { AdService } from 'src/ad/ad.service';
 
 @Controller('webhook')
 export class WebhookController {
@@ -64,6 +66,7 @@ export class WebhookController {
     private readonly memoryService: MemoryService,
     private readonly companyService: CompanyService,
     private readonly supportNotify: SupportNotificationService,
+    private readonly adService: AdService,
   ) {}
 
   // ===============================
@@ -116,28 +119,32 @@ export class WebhookController {
             continue;
           }
 
-          // ✅ Capture ad referral even if there's NO text message
-          // ✅ Capture ad referral even if there's NO text message
           const ad = this.extractAdReferral(messaging);
 
-          if (ad) {
-            console.log('✅ AD CAPTURED', {
+          if (ad?.adId) {
+            // Look up manual ad info from Mongo
+            const meta = await this.adService.getByAdId(pageId, ad.adId);
+
+            await this.memoryService.saveAdContext(pageId, senderId, {
+              adId: ad.adId,
+              adTitle: meta?.title || undefined,
+              adProduct: meta?.product || undefined,
+              adDescription: meta?.description || undefined,
+              adTags: meta?.tags || undefined,
+            });
+
+            console.log('✅ AD CAPTURED + ENRICHED', {
               pageId,
               senderId,
-              ad,
+              adId: ad.adId,
+              metaFound: !!meta,
             });
-            console.log(
-              'RAW REFERRAL:',
-              messaging.referral || messaging.postback?.referral,
-            );
-
-            await this.memoryService.saveAdContext(pageId, senderId, ad);
           } else if (
             messaging?.referral ||
             messaging?.postback?.referral ||
             messaging?.message?.referral
           ) {
-            console.log('⚠️ REFERRAL PRESENT BUT NOT RECOGNIZED AS AD', {
+            console.log('⚠️ REFERRAL PRESENT BUT NO ad_id FOUND', {
               pageId,
               senderId,
               referral:
@@ -306,6 +313,8 @@ export class WebhookController {
         mem: {
           adTitle: mem.adTitle,
           adProduct: mem.adProduct,
+          adDescription: (mem as any).adDescription,
+          adTags: (mem as any).adTags,
           recentMessages: mem.recentMessages,
         },
       });
@@ -501,11 +510,7 @@ export class WebhookController {
 
     return fallback;
   }
-  private extractAdReferral(messaging: any): {
-    adId?: string;
-    adTitle?: string;
-    adProduct?: string;
-  } | null {
+  private extractAdReferral(messaging: any): { adId?: string } | null {
     const r =
       messaging?.referral ||
       messaging?.postback?.referral ||
@@ -513,15 +518,9 @@ export class WebhookController {
 
     if (!r) return null;
 
-    const source = String(r.source || '').toUpperCase();
-    const looksLikeAd = source === 'ADS' || !!r.ad_id;
+    const adId = r.ad_id || r.adId || r?.ads_context_data?.ad_id;
+    if (!adId) return null;
 
-    if (!looksLikeAd) return null;
-
-    return {
-      adId: r.ad_id,
-      adTitle: r.ad_title,
-      adProduct: r.ad_context_data?.product_id,
-    };
+    return { adId: String(adId) };
   }
 }

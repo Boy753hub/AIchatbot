@@ -147,7 +147,13 @@ export class MemoryService {
   async saveAdContext(
     pageId: string,
     senderId: string,
-    ad: { adId?: string; adTitle?: string; adProduct?: string },
+    ad: {
+      adId?: string;
+      adTitle?: string;
+      adProduct?: string;
+      adDescription?: string;
+      adTags?: string[];
+    },
   ) {
     await this.memoryModel.updateOne(
       { pageId, senderId },
@@ -156,6 +162,8 @@ export class MemoryService {
           adId: ad.adId,
           adTitle: ad.adTitle,
           adProduct: ad.adProduct,
+          adDescription: ad.adDescription,
+          adTags: Array.isArray(ad.adTags) ? ad.adTags : [],
         },
       },
       { upsert: true },

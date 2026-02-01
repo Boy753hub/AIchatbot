@@ -6,6 +6,7 @@ import { MemoryModule } from './memory/memory.module';
 import { ConfigModule } from '@nestjs/config';
 import { CompanyModule } from './company/company.module';
 import { NotifyModule } from './notify/notify.module';
+import { AdModule } from './ad/ad.module';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { NotifyModule } from './notify/notify.module';
 
     // ✅ NOW MongoDB can read process.env.MONGO_URL
     MongooseModule.forRoot(process.env.MONGO_URL!),
-
+    AdModule,
     MemoryModule,
     CompanyModule,
     NotifyModule,
