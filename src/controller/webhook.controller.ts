@@ -162,6 +162,38 @@ export class WebhookController {
 
           if (!text) continue;
 
+          // ✅ Handle Facebook generated questions (icebreakers) without AI
+          if (this.isFacebookIcebreaker(text)) {
+            // cancel any pending debounce burst
+            this.cancelPending(pageId, senderId);
+
+            // if human mode is active, do nothing (operator should handle)
+            const mode = await this.memoryService.ensureAiIfExpired(
+              pageId,
+              senderId,
+            );
+            if (mode === 'human') continue;
+
+            // store as user turn (optional but good for context)
+            await this.memoryService.addTurn(pageId, senderId, 'user', text);
+
+            // send safe Georgian reply (no latin letters)
+            await this.sendSenderAction(company, senderId, 'typing_on').catch(
+              () => {},
+            );
+            await this.sendMessage(company, senderId, this.FB_ICEBREAKER_REPLY);
+            await this.memoryService.addTurn(
+              pageId,
+              senderId,
+              'assistant',
+              this.FB_ICEBREAKER_REPLY,
+            );
+            await this.sendSenderAction(company, senderId, 'typing_off').catch(
+              () => {},
+            );
+            continue;
+          }
+
           // ✅ Message dedupe (prevents double replies)
           if (mid) {
             const already = await this.memoryService.hasProcessedMid?.(
@@ -522,5 +554,36 @@ export class WebhookController {
     if (!adId) return null;
 
     return { adId: String(adId) };
+  }
+
+  // ===============================
+  // Facebook "icebreakers" / generated questions
+  // ===============================
+  private readonly FB_ICEBREAKERS = [
+    'can i learn more about your business?',
+    'learn more about your business',
+    'tell me more about your business',
+    'tell me about your business',
+    'what do you sell?',
+    'what products do you have?',
+    'i want to know more about your business',
+    'can you tell me more?',
+  ];
+
+  private readonly FB_ICEBREAKER_REPLY = 'გამარჯობა, რით შემიძლია დაგეხმაროთ?';
+
+  private normalizeText(s: string): string {
+    return (s || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s?]+/gu, ' ') // remove punctuation (unicode-safe)
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private isFacebookIcebreaker(text: string): boolean {
+    const t = this.normalizeText(text);
+
+    // exact match OR contained match
+    return this.FB_ICEBREAKERS.some((p) => t === p || t.includes(p));
   }
 }
