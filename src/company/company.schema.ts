@@ -61,6 +61,7 @@ export class Company {
   @Prop({
     type: [
       {
+        days: { type: [String], default: [] }, // e.g. ["mon","tue"] or [] = all days
         start: { type: String }, // "09:00"
         end: { type: String }, // "19:00"
         message: { type: String },
@@ -68,7 +69,12 @@ export class Company {
     ],
     default: [],
   })
-  handoffSchedule: { start: string; end: string; message: string }[];
+  handoffSchedule: {
+    days?: string[]; // optional: [] or missing means "every day"
+    start: string;
+    end: string;
+    message: string;
+  }[];
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);

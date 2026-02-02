@@ -132,30 +132,14 @@ export class WebhookController {
               adDescription: meta?.description || undefined,
               adTags: meta?.tags || undefined,
             });
-
-            console.log('✅ AD CAPTURED + ENRICHED', {
-              pageId,
-              senderId,
-              adId: ad.adId,
-              metaFound: !!meta,
-            });
           } else if (
             messaging?.referral ||
             messaging?.postback?.referral ||
             messaging?.message?.referral
-          ) {
-            console.log('⚠️ REFERRAL PRESENT BUT NO ad_id FOUND', {
-              pageId,
-              senderId,
-              referral:
-                messaging.referral ||
-                messaging.postback?.referral ||
-                messaging.message?.referral,
-            });
-          }
-
-          // ✅ Now ignore anything that is not a real user text message
-          if (!messaging.message || messaging.message.is_echo) continue;
+          )
+            if (!messaging.message || messaging.message.is_echo)
+              // ✅ Now ignore anything that is not a real user text message
+              continue;
 
           const text = messaging.message?.text as string | undefined;
           const mid = messaging.message?.mid as string | undefined;
@@ -520,12 +504,70 @@ export class WebhookController {
     return nowMin >= startMin || nowMin < endMin;
   }
 
+  private normalizeDay(d: string): string {
+    return (d || '').trim().toLowerCase();
+  }
+
+  // Luxon weekday: 1=Mon ... 7=Sun
+  private weekdayKeyFromLuxon(weekday: number): string {
+    switch (weekday) {
+      case 1:
+        return 'mon';
+      case 2:
+        return 'tue';
+      case 3:
+        return 'wed';
+      case 4:
+        return 'thu';
+      case 5:
+        return 'fri';
+      case 6:
+        return 'sat';
+      case 7:
+        return 'sun';
+      default:
+        return 'mon';
+    }
+  }
+
+  private ruleMatchesDay(ruleDays: any, todayKey: string): boolean {
+    // If days missing/empty => applies every day (backward compatible)
+    if (!Array.isArray(ruleDays) || ruleDays.length === 0) return true;
+
+    const normalized = ruleDays.map((d) => this.normalizeDay(String(d)));
+
+    // Allow formats:
+    // ["mon","tue"] OR ["monday"] OR ["1"] (Mon) etc.
+    // We'll support:
+    // mon,tue,wed,thu,fri,sat,sun
+    // monday,tuesday,... (we map first 3 letters)
+    // 1..7 = Mon..Sun
+    for (const d of normalized) {
+      if (!d) continue;
+
+      // numeric day support: "1".."7" (Mon..Sun)
+      if (/^[1-7]$/.test(d)) {
+        const key = this.weekdayKeyFromLuxon(Number(d));
+        if (key === todayKey) return true;
+        continue;
+      }
+
+      // full names support: monday -> mon
+      const short = d.length >= 3 ? d.slice(0, 3) : d;
+      if (short === todayKey) return true;
+    }
+
+    return false;
+  }
+
   private getTimedHandoffMessage(company: any): string {
     const fallback = company?.handoffMessage || this.DEFAULT_HANDOFF_MESSAGE;
 
     const tz = company?.timezone || 'Asia/Tbilisi';
     const now = DateTime.now().setZone(tz);
+
     const nowMin = now.hour * 60 + now.minute;
+    const todayKey = this.weekdayKeyFromLuxon(now.weekday); // "mon".."sun"
 
     const schedule = Array.isArray(company?.handoffSchedule)
       ? company.handoffSchedule
@@ -537,6 +579,11 @@ export class WebhookController {
       const msg = (rule?.message || '').trim();
 
       if (startMin === null || endMin === null || !msg) continue;
+
+      // ✅ Day match
+      if (!this.ruleMatchesDay(rule?.days, todayKey)) continue;
+
+      // ✅ Time window match
       if (this.isInWindow(nowMin, startMin, endMin)) return msg;
     }
 
@@ -568,6 +615,7 @@ export class WebhookController {
     'what products do you have?',
     'i want to know more about your business',
     'can you tell me more?',
+    'Is anyone available to chat?',
   ];
 
   private readonly FB_ICEBREAKER_REPLY = 'გამარჯობა, რით შემიძლია დაგეხმაროთ?';
