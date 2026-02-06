@@ -47,7 +47,7 @@ export class WebhookController {
   // ===============================
   // Debounce / batching (NEW)
   // ===============================
-  private readonly DEBOUNCE_MS = 1200;
+  private readonly DEBOUNCE_MS = 2000; // 2 seconds
 
   private pending = new Map<
     string,
@@ -137,9 +137,7 @@ export class WebhookController {
             messaging?.postback?.referral ||
             messaging?.message?.referral
           )
-            if (!messaging.message || messaging.message.is_echo)
-              // ✅ Now ignore anything that is not a real user text message
-              continue;
+            if (!messaging.message || messaging.message.is_echo) continue;
 
           const text = messaging.message?.text as string | undefined;
           const mid = messaging.message?.mid as string | undefined;
