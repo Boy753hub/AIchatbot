@@ -616,6 +616,8 @@ export class WebhookController {
     'i want to know more about your business',
     'can you tell me more?',
     'Is anyone available to chat?',
+    'Can you tell me more about your ad?',
+    'Is anyone available to chat? ',
   ];
 
   private readonly FB_ICEBREAKER_REPLY = 'გამარჯობა, რით შემიძლია დაგეხმაროთ?';
