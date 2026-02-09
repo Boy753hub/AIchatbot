@@ -15,6 +15,12 @@ type CompanyAIConfig = {
   forbiddenWords?: string[];
 };
 
+type OpenAIUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+};
+
 @Injectable()
 export class OpenaiService {
   private readonly OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -35,9 +41,7 @@ export class OpenaiService {
     const messages: ChatMessage[] = [];
 
     // ✅ EARLY EXIT — fixes TS error cleanly
-    if (!mem) {
-      return messages;
-    }
+    if (!mem) return messages;
 
     if (
       mem.adTitle ||
@@ -61,14 +65,12 @@ Ad tags: ${
 
 Use this information to answer more accurately.
 Do NOT mention advertisements unless the user explicitly asks.
-      `.trim(),
+        `.trim(),
       });
     }
 
     for (const m of mem.recentMessages || []) {
-      if (m?.content) {
-        messages.push({ role: m.role, content: m.content });
-      }
+      if (m?.content) messages.push({ role: m.role, content: m.content });
     }
 
     return messages;
@@ -82,19 +84,19 @@ Do NOT mention advertisements unless the user explicitly asks.
     forbiddenWords: string[],
   ): boolean {
     if (!forbiddenWords?.length) return false;
-    const lower = text.toLowerCase();
-    return forbiddenWords.some((w) => lower.includes(w.toLowerCase()));
+    const lower = (text || '').toLowerCase();
+    return forbiddenWords.some((w) => lower.includes((w || '').toLowerCase()));
   }
 
   // ===============================
-  // 🔧 OPENAI CALL
+  // 🔧 OPENAI CALL (returns usage for billing)
   // ===============================
   private async callOpenAI(params: {
     model: string;
     temperature: number;
     messages: ChatMessage[];
     handoffToken: string;
-  }): Promise<string> {
+  }): Promise<{ text: string; usage?: OpenAIUsage }> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY is missing');
 
@@ -114,10 +116,14 @@ Do NOT mention advertisements unless the user explicitly asks.
     );
 
     const text = response.data?.choices?.[0]?.message?.content;
+    const usage = response.data?.usage as OpenAIUsage | undefined;
 
-    return typeof text === 'string' && text.length
-      ? text.trim()
-      : params.handoffToken;
+    const finalText =
+      typeof text === 'string' && text.length
+        ? text.trim()
+        : params.handoffToken;
+
+    return { text: finalText, usage };
   }
 
   // ===============================
@@ -133,7 +139,11 @@ Do NOT mention advertisements unless the user explicitly asks.
       adTags?: string[];
       recentMessages?: { role: 'user' | 'assistant'; content: string }[];
     };
-  }): Promise<string> {
+  }): Promise<{
+    reply: string;
+    usageMain?: OpenAIUsage;
+    usageRewrite?: OpenAIUsage;
+  }> {
     const { company, userText, mem } = args;
 
     const model = company.model ?? this.DEFAULT_MODEL;
@@ -143,51 +153,67 @@ Do NOT mention advertisements unless the user explicitly asks.
 
     // Company system prompt must exist
     if (!company.systemPrompt?.trim()) {
-      // If company misconfigured, safest behavior is handoff
-      return handoffToken;
+      return { reply: handoffToken };
     }
 
     const contextMessages = this.buildContextMessages(mem);
 
-    // Build final messages
     const messages: ChatMessage[] = [
       { role: 'system', content: company.systemPrompt },
       ...contextMessages,
       { role: 'user', content: userText },
     ];
 
-    let reply = await this.callOpenAI({
-      model,
-      temperature,
-      messages,
-      handoffToken,
-    });
-
-    // 🚨 NEVER TOUCH HANDOFF TOKEN
-    if (reply === handoffToken) {
-      return reply;
-    }
-
-    // 🧹 Language cleanup (optional per company via forbiddenWords)
-    if (this.containsForbiddenWords(reply, forbiddenWords)) {
-      reply = await this.callOpenAI({
+    try {
+      const main = await this.callOpenAI({
         model,
-        temperature: Math.min(temperature, 0.2),
+        temperature,
+        messages,
         handoffToken,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Rewrite the following text fully in clean, natural Georgian. Do not change meaning.',
-          },
-          { role: 'user', content: reply },
-        ],
       });
 
-      // Again: do not touch token
-      if (reply === handoffToken) return reply;
-    }
+      let reply = main.text;
 
-    return reply;
+      // 🚨 NEVER TOUCH HANDOFF TOKEN
+      if (reply === handoffToken) {
+        return { reply, usageMain: main.usage };
+      }
+
+      // 🧹 Language cleanup (optional per company via forbiddenWords)
+      if (this.containsForbiddenWords(reply, forbiddenWords)) {
+        const rewrite = await this.callOpenAI({
+          model,
+          temperature: Math.min(temperature, 0.2),
+          handoffToken,
+          messages: [
+            // ✅ keep company prompt so rewrite still respects rules
+            { role: 'system', content: company.systemPrompt },
+            {
+              role: 'system',
+              content:
+                'გადაწერე შემდეგი ტექსტი სრულად სუფთა და ბუნებრივ ქართულად. მნიშვნელობა არ შეცვალო. არ დაამატო ახალი ინფორმაცია. ლათინური ასოები არ გამოიყენო.',
+            },
+            { role: 'user', content: reply },
+          ],
+        });
+
+        reply = rewrite.text;
+
+        if (reply === handoffToken) {
+          return { reply, usageMain: main.usage, usageRewrite: rewrite.usage };
+        }
+
+        return { reply, usageMain: main.usage, usageRewrite: rewrite.usage };
+      }
+
+      return { reply, usageMain: main.usage };
+    } catch (err: any) {
+      // If OpenAI fails hard, safest behavior is handoff token
+      console.error(
+        'OpenAI call failed:',
+        err?.response?.data || err?.message || err,
+      );
+      return { reply: handoffToken };
+    }
   }
 }

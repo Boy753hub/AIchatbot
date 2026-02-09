@@ -7,6 +7,7 @@ import { ConfigModule } from '@nestjs/config';
 import { CompanyModule } from './company/company.module';
 import { NotifyModule } from './notify/notify.module';
 import { AdModule } from './ad/ad.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AdModule } from './ad/ad.module';
     MemoryModule,
     CompanyModule,
     NotifyModule,
+    BillingModule,
   ],
   controllers: [WebhookController],
   providers: [OpenaiService],

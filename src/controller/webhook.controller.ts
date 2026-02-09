@@ -45,7 +45,7 @@ export class WebhookController {
   ];
 
   // ===============================
-  // Debounce / batching (NEW)
+  // Debounce / batching
   // ===============================
   private readonly DEBOUNCE_MS = 2000; // 2 seconds
 
@@ -101,7 +101,6 @@ export class WebhookController {
     for (const entry of body.entry || []) {
       for (const messaging of entry.messaging || []) {
         try {
-          // ✅ Identify tenant + sender ASAP (works for message/postback/referral)
           const senderId = messaging.sender?.id as string | undefined;
 
           const pageId =
@@ -119,12 +118,10 @@ export class WebhookController {
             continue;
           }
 
+          // ✅ Capture ad_id and enrich from DB if present
           const ad = this.extractAdReferral(messaging);
-
           if (ad?.adId) {
-            // Look up manual ad info from Mongo
             const meta = await this.adService.getByAdId(pageId, ad.adId);
-
             await this.memoryService.saveAdContext(pageId, senderId, {
               adId: ad.adId,
               adTitle: meta?.title || undefined,
@@ -132,12 +129,10 @@ export class WebhookController {
               adDescription: meta?.description || undefined,
               adTags: meta?.tags || undefined,
             });
-          } else if (
-            messaging?.referral ||
-            messaging?.postback?.referral ||
-            messaging?.message?.referral
-          )
-            if (!messaging.message || messaging.message.is_echo) continue;
+          }
+
+          // ✅ Ignore anything that is not a real user text message
+          if (!messaging.message || messaging.message.is_echo) continue;
 
           const text = messaging.message?.text as string | undefined;
           const mid = messaging.message?.mid as string | undefined;
@@ -146,20 +141,16 @@ export class WebhookController {
 
           // ✅ Handle Facebook generated questions (icebreakers) without AI
           if (this.isFacebookIcebreaker(text)) {
-            // cancel any pending debounce burst
             this.cancelPending(pageId, senderId);
 
-            // if human mode is active, do nothing (operator should handle)
             const mode = await this.memoryService.ensureAiIfExpired(
               pageId,
               senderId,
             );
             if (mode === 'human') continue;
 
-            // store as user turn (optional but good for context)
             await this.memoryService.addTurn(pageId, senderId, 'user', text);
 
-            // send safe Georgian reply (no latin letters)
             await this.sendSenderAction(company, senderId, 'typing_on').catch(
               () => {},
             );
@@ -187,7 +178,7 @@ export class WebhookController {
             await this.memoryService.markProcessedMid?.(pageId, senderId, mid);
           }
 
-          // 🔁 Auto-return to AI after 24h (tenant-scoped)
+          // 🔁 Auto-return to AI after 24h
           const mode = await this.memoryService.ensureAiIfExpired(
             pageId,
             senderId,
@@ -196,7 +187,6 @@ export class WebhookController {
 
           // 🔍 User explicitly wants human
           if (this.wantsHuman(text)) {
-            // cancel any pending debounce burst
             this.cancelPending(pageId, senderId);
 
             await this.memoryService.switchToHuman(pageId, senderId);
@@ -229,7 +219,7 @@ export class WebhookController {
   }
 
   // ===============================
-  // Debounce helpers (NEW)
+  // Debounce helpers
   // ===============================
   private key(pageId: string, senderId: string) {
     return `${pageId}:${senderId}`;
@@ -264,19 +254,14 @@ export class WebhookController {
       this.pending.set(k, entry);
     }
 
-    // Always keep latest company config
     entry.company = company;
-
-    // Store chunk
     entry.texts.push(text);
 
-    // Send typing_on once per burst
     if (!entry.typingOnSent) {
       entry.typingOnSent = true;
       this.sendSenderAction(company, senderId, 'typing_on').catch(() => {});
     }
 
-    // Reset timer
     if (entry.timer) clearTimeout(entry.timer);
 
     entry.timer = setTimeout(() => {
@@ -290,7 +275,6 @@ export class WebhookController {
     const entry = this.pending.get(k);
     if (!entry) return;
 
-    // Remove early to prevent double flush
     this.pending.delete(k);
 
     const { company, pageId, senderId, texts } = entry;
@@ -306,16 +290,14 @@ export class WebhookController {
     }
 
     try {
-      // Re-check human mode right before calling AI
       const mode = await this.memoryService.ensureAiIfExpired(pageId, senderId);
       if (mode === 'human') return;
 
-      // Save ONE user turn (batched)
       await this.memoryService.addTurn(pageId, senderId, 'user', combinedText);
 
       const mem = await this.memoryService.getOrCreate(pageId, senderId);
 
-      const aiReply = await this.aiService.getCompletion({
+      const result = await this.aiService.getCompletion({
         company: {
           systemPrompt: company.systemPrompt,
           model: company.model ?? 'gpt-4o',
@@ -333,9 +315,16 @@ export class WebhookController {
         },
       });
 
+      const aiReply = result?.reply;
       if (!aiReply) return;
 
-      // 🚨 AI-requested handoff (robust)
+      // ✅ Re-check mode after AI returns (race safety)
+      const modeAfter = await this.memoryService.ensureAiIfExpired(
+        pageId,
+        senderId,
+      );
+      if (modeAfter === 'human') return;
+
       const handoffToken = company.handoffToken ?? '__HANDOFF_TO_HUMAN__';
 
       if (this.looksLikeHandoff(aiReply, handoffToken)) {
@@ -348,9 +337,10 @@ export class WebhookController {
           senderId,
           reason: 'ai_handoff',
           userProfile: profile ?? undefined,
-          lastUserText: combinedText, // your debounced multi-line user input
+          lastUserText: combinedText,
           ad: { adTitle: mem.adTitle, adProduct: mem.adProduct },
         });
+
         const handoffMsg = this.getTimedHandoffMessage(company);
         await this.sendMessage(company, senderId, handoffMsg);
         return;
@@ -381,19 +371,12 @@ export class WebhookController {
     const r = this.normalizeForTokenCheck(reply);
     const t = this.normalizeForTokenCheck(handoffToken);
 
-    // exact or embedded
     if (r.includes(t)) return true;
-
-    // tolerate single-underscore variants like _HANDOFF_TO_HUMAN_
     if (r.includes('HANDOFF_TO_HUMAN')) return true;
 
     return false;
   }
 
-  /**
-   * ✅ IMPORTANT: for multi-company you likely need per-company page tokens.
-   * So we pass `company` in and use company.fbPageToken (stored in DB).
-   */
   private async sendSenderAction(
     company: any,
     senderId: string,
@@ -449,6 +432,7 @@ export class WebhookController {
       );
     }
   }
+
   private async fetchFbUserProfile(
     company: any,
     senderId: string,
@@ -473,7 +457,6 @@ export class WebhookController {
 
       return res.data ?? null;
     } catch (err: any) {
-      // Don't block handoff if FB profile fetch fails
       console.warn(
         'fetchFbUserProfile failed:',
         err?.response?.data || err?.message,
@@ -481,6 +464,7 @@ export class WebhookController {
       return null;
     }
   }
+
   private toMinutes(hhmm: string): number | null {
     const m = /^(\d{2}):(\d{2})$/.exec((hhmm || '').trim());
     if (!m) return null;
@@ -495,10 +479,7 @@ export class WebhookController {
     startMin: number,
     endMin: number,
   ): boolean {
-    // normal window e.g. 09:00-19:00
     if (startMin <= endMin) return nowMin >= startMin && nowMin < endMin;
-
-    // overnight window e.g. 19:00-02:00
     return nowMin >= startMin || nowMin < endMin;
   }
 
@@ -506,7 +487,6 @@ export class WebhookController {
     return (d || '').trim().toLowerCase();
   }
 
-  // Luxon weekday: 1=Mon ... 7=Sun
   private weekdayKeyFromLuxon(weekday: number): string {
     switch (weekday) {
       case 1:
@@ -529,28 +509,19 @@ export class WebhookController {
   }
 
   private ruleMatchesDay(ruleDays: any, todayKey: string): boolean {
-    // If days missing/empty => applies every day (backward compatible)
     if (!Array.isArray(ruleDays) || ruleDays.length === 0) return true;
 
     const normalized = ruleDays.map((d) => this.normalizeDay(String(d)));
 
-    // Allow formats:
-    // ["mon","tue"] OR ["monday"] OR ["1"] (Mon) etc.
-    // We'll support:
-    // mon,tue,wed,thu,fri,sat,sun
-    // monday,tuesday,... (we map first 3 letters)
-    // 1..7 = Mon..Sun
     for (const d of normalized) {
       if (!d) continue;
 
-      // numeric day support: "1".."7" (Mon..Sun)
       if (/^[1-7]$/.test(d)) {
         const key = this.weekdayKeyFromLuxon(Number(d));
         if (key === todayKey) return true;
         continue;
       }
 
-      // full names support: monday -> mon
       const short = d.length >= 3 ? d.slice(0, 3) : d;
       if (short === todayKey) return true;
     }
@@ -565,7 +536,7 @@ export class WebhookController {
     const now = DateTime.now().setZone(tz);
 
     const nowMin = now.hour * 60 + now.minute;
-    const todayKey = this.weekdayKeyFromLuxon(now.weekday); // "mon".."sun"
+    const todayKey = this.weekdayKeyFromLuxon(now.weekday);
 
     const schedule = Array.isArray(company?.handoffSchedule)
       ? company.handoffSchedule
@@ -577,16 +548,14 @@ export class WebhookController {
       const msg = (rule?.message || '').trim();
 
       if (startMin === null || endMin === null || !msg) continue;
-
-      // ✅ Day match
       if (!this.ruleMatchesDay(rule?.days, todayKey)) continue;
 
-      // ✅ Time window match
       if (this.isInWindow(nowMin, startMin, endMin)) return msg;
     }
 
     return fallback;
   }
+
   private extractAdReferral(messaging: any): { adId?: string } | null {
     const r =
       messaging?.referral ||
@@ -602,7 +571,7 @@ export class WebhookController {
   }
 
   // ===============================
-  // Facebook "icebreakers" / generated questions
+  // Facebook "icebreakers"
   // ===============================
   private readonly FB_ICEBREAKERS = [
     'can i learn more about your business?',
@@ -613,9 +582,8 @@ export class WebhookController {
     'what products do you have?',
     'i want to know more about your business',
     'can you tell me more?',
-    'Is anyone available to chat?',
-    'Can you tell me more about your ad?',
-    'Is anyone available to chat? ',
+    'is anyone available to chat?',
+    'can you tell me more about your ad?',
   ];
 
   private readonly FB_ICEBREAKER_REPLY = 'გამარჯობა, რით შემიძლია დაგეხმაროთ?';
@@ -623,15 +591,13 @@ export class WebhookController {
   private normalizeText(s: string): string {
     return (s || '')
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s?]+/gu, ' ') // remove punctuation (unicode-safe)
+      .replace(/[^\p{L}\p{N}\s?]+/gu, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
   private isFacebookIcebreaker(text: string): boolean {
     const t = this.normalizeText(text);
-
-    // exact match OR contained match
     return this.FB_ICEBREAKERS.some((p) => t === p || t.includes(p));
   }
 }
