@@ -151,7 +151,6 @@ Do NOT mention advertisements unless the user explicitly asks.
     const handoffToken = company.handoffToken ?? this.DEFAULT_HANDOFF_TOKEN;
     const forbiddenWords = company.forbiddenWords ?? [];
 
-    // Company system prompt must exist
     if (!company.systemPrompt?.trim()) {
       return { reply: handoffToken };
     }

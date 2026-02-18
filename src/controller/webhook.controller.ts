@@ -23,6 +23,7 @@ import { MemoryService } from 'src/memory/memory.service';
 import { CompanyService } from 'src/company/company.service';
 import { SupportNotificationService } from 'src/notify/support-notification.service';
 import { AdService } from 'src/ad/ad.service';
+import { BillingService } from 'src/billing/billing.service';
 
 @Controller('webhook')
 export class WebhookController {
@@ -67,6 +68,7 @@ export class WebhookController {
     private readonly companyService: CompanyService,
     private readonly supportNotify: SupportNotificationService,
     private readonly adService: AdService,
+    private readonly billingService: BillingService,
   ) {}
 
   // ===============================
@@ -275,6 +277,7 @@ export class WebhookController {
     const entry = this.pending.get(k);
     if (!entry) return;
 
+    // remove early to prevent double flush
     this.pending.delete(k);
 
     const { company, pageId, senderId, texts } = entry;
@@ -290,9 +293,11 @@ export class WebhookController {
     }
 
     try {
+      // re-check human mode before AI call
       const mode = await this.memoryService.ensureAiIfExpired(pageId, senderId);
       if (mode === 'human') return;
 
+      // save ONE user turn (batched)
       await this.memoryService.addTurn(pageId, senderId, 'user', combinedText);
 
       const mem = await this.memoryService.getOrCreate(pageId, senderId);
@@ -318,7 +323,33 @@ export class WebhookController {
       const aiReply = result?.reply;
       if (!aiReply) return;
 
-      // ✅ Re-check mode after AI returns (race safety)
+      // ===============================
+      // 💰 BILLING (MAIN CALL)
+      // ===============================
+      await this.billingService.logCall({
+        companyId: company.companyId,
+        pageId,
+        senderId,
+        model: company.model ?? 'gpt-4o',
+        usage: result?.usageMain,
+        kind: 'main',
+      });
+
+      // ===============================
+      // 💰 BILLING (REWRITE CALL)
+      // ===============================
+      if (result?.usageRewrite) {
+        await this.billingService.logCall({
+          companyId: company.companyId,
+          pageId,
+          senderId,
+          model: company.model ?? 'gpt-4o',
+          usage: result.usageRewrite,
+          kind: 'rewrite',
+        });
+      }
+
+      // re-check mode AFTER AI returns (race safety)
       const modeAfter = await this.memoryService.ensureAiIfExpired(
         pageId,
         senderId,

@@ -16,8 +16,6 @@ import { BillingModule } from './billing/billing.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-
-    // ✅ NOW MongoDB can read process.env.MONGO_URL
     MongooseModule.forRoot(process.env.MONGO_URL!),
     AdModule,
     MemoryModule,
