@@ -48,7 +48,7 @@ export class WebhookController {
   // ===============================
   // Debounce / batching
   // ===============================
-  private readonly DEBOUNCE_MS = 2000; // 2 seconds
+  private readonly DEBOUNCE_MS = 2500; // 2,5 seconds
 
   private pending = new Map<
     string,
