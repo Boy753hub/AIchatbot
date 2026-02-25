@@ -8,6 +8,7 @@ import { CompanyModule } from './company/company.module';
 import { NotifyModule } from './notify/notify.module';
 import { AdModule } from './ad/ad.module';
 import { BillingModule } from './billing/billing.module';
+import { GeminiService } from './service/gemini.service';
 
 @Module({
   imports: [
@@ -24,6 +25,6 @@ import { BillingModule } from './billing/billing.module';
     BillingModule,
   ],
   controllers: [WebhookController],
-  providers: [OpenaiService],
+  providers: [OpenaiService, GeminiService],
 })
 export class AppModule {}

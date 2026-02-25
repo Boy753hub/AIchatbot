@@ -80,6 +80,6 @@ export class Company {
 export const CompanySchema = SchemaFactory.createForClass(Company);
 
 // Helpful indexes
-CompanySchema.index({ fbPageId: 1 }, { unique: true });
-CompanySchema.index({ companyId: 1 }, { unique: true });
+// CompanySchema.index({ fbPageId: 1 }, { unique: true });
+// CompanySchema.index({ companyId: 1 }, { unique: true });
 CompanySchema.index({ isActive: 1 });

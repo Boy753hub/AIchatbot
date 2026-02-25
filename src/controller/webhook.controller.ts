@@ -24,6 +24,7 @@ import { CompanyService } from 'src/company/company.service';
 import { SupportNotificationService } from 'src/notify/support-notification.service';
 import { AdService } from 'src/ad/ad.service';
 import { BillingService } from 'src/billing/billing.service';
+import { GeminiService } from 'src/service/gemini.service';
 
 @Controller('webhook')
 export class WebhookController {
@@ -63,7 +64,7 @@ export class WebhookController {
   >();
 
   constructor(
-    private readonly aiService: OpenaiService,
+    private readonly aiService: GeminiService,
     private readonly memoryService: MemoryService,
     private readonly companyService: CompanyService,
     private readonly supportNotify: SupportNotificationService,
