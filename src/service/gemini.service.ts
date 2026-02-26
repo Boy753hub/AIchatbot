@@ -19,7 +19,7 @@ type CompanyAIConfig = {
 @Injectable()
 export class GeminiService {
   private readonly API_URL =
-    'https://generativelanguage.googleapis.com/v1beta/models/';
+    'https://generativelanguage.googleapis.com/v1beta/models';
 
   private readonly DEFAULT_MODEL = 'gemini-2.0-flash';
   private readonly DEFAULT_TEMP = 0.4;
@@ -90,7 +90,11 @@ Do NOT mention ads unless asked.
 
     const contents = params.messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
+      parts: [
+        {
+          text: `${m.role === 'system' ? '[SYSTEM] ' : ''}${m.content}`,
+        },
+      ],
     }));
 
     const res = await axios.post(
@@ -101,6 +105,11 @@ Do NOT mention ads unless asked.
           temperature: params.temperature,
         },
       },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
     );
 
     const text =
@@ -109,7 +118,7 @@ Do NOT mention ads unless asked.
 
     return {
       text: String(text).trim(),
-      usage: undefined, // Gemini doesn't return tokens (yet)
+      usage: undefined,
     };
   }
 
