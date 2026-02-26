@@ -26,7 +26,7 @@ type AIUsage = {
 export class GeminiService { // Keeping the name so you don't break your Controller injections!
   // 👇 Updated to Gemini's REST endpoint
   private readonly GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
-  private readonly DEFAULT_MODEL = 'gemini-2.5-flash'; // Google's fast, default model
+  private readonly DEFAULT_MODEL = 'gemini-2.0-flash'; // Google's fast, default model
   private readonly DEFAULT_TEMPERATURE = 0.4;
   private readonly DEFAULT_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
 
