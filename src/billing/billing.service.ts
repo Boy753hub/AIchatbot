@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { UsageLog, UsageLogDocument } from './usage.schema';
 
-type TokenUsage = {
+export type TokenUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;

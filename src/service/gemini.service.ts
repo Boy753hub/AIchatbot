@@ -1,9 +1,9 @@
-/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
+import { TokenUsage } from 'src/billing/billing.service';
 
 type ChatRole = 'system' | 'user' | 'assistant';
 type ChatMessage = { role: ChatRole; content: string };
@@ -16,22 +16,17 @@ type CompanyAIConfig = {
   forbiddenWords?: string[];
 };
 
-type AIUsage = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-};
-
 @Injectable()
-export class GeminiService { // Keeping the name so you don't break your Controller injections!
-  // 👇 Updated to Gemini's REST endpoint
-  private readonly GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
-  private readonly DEFAULT_MODEL = 'gemini-2.0-flash'; // Google's fast, default model
-  private readonly DEFAULT_TEMPERATURE = 0.4;
-  private readonly DEFAULT_HANDOFF_TOKEN = '__HANDOFF_TO_HUMAN__';
+export class GeminiService {
+  private readonly API_URL =
+    'https://generativelanguage.googleapis.com/v1beta/models';
+
+  private readonly DEFAULT_MODEL = 'gemini-1.5-flash';
+  private readonly DEFAULT_TEMP = 0.4;
+  private readonly DEFAULT_HANDOFF = '__HANDOFF_TO_HUMAN__';
 
   // ===============================
-  // 🧠 CONTEXT BUILDER (Ad + Memory)
+  // 🧠 CONTEXT BUILDER
   // ===============================
   private buildContextMessages(mem?: {
     adTitle?: string;
@@ -41,31 +36,26 @@ export class GeminiService { // Keeping the name so you don't break your Control
     recentMessages?: { role: 'user' | 'assistant'; content: string }[];
   }): ChatMessage[] {
     const messages: ChatMessage[] = [];
-
     if (!mem) return messages;
 
     if (
       mem.adTitle ||
       mem.adProduct ||
       mem.adDescription ||
-      (Array.isArray(mem.adTags) && mem.adTags.length > 0)
+      (Array.isArray(mem.adTags) && mem.adTags.length)
     ) {
       messages.push({
         role: 'system',
         content: `
-The user started this conversation from a Facebook advertisement.
+User came from Facebook ad.
 
-Ad title: ${mem.adTitle ?? 'Unknown'}
-Ad product reference: ${mem.adProduct ?? 'Unknown'}
-Ad description: ${mem.adDescription ?? 'Unknown'}
-Ad tags: ${
-          Array.isArray(mem.adTags) && mem.adTags.length
-            ? mem.adTags.join(', ')
-            : 'None'
-        }
+Title: ${mem.adTitle ?? 'Unknown'}
+Product: ${mem.adProduct ?? 'Unknown'}
+Description: ${mem.adDescription ?? 'Unknown'}
+Tags: ${mem.adTags?.length ? mem.adTags.join(', ') : 'None'}
 
-Use this information to answer more accurately.
-Do NOT mention advertisements unless the user explicitly asks.
+Use this info to answer better.
+Do NOT mention ads unless asked.
         `.trim(),
       });
     }
@@ -78,89 +68,53 @@ Do NOT mention advertisements unless the user explicitly asks.
   }
 
   // ===============================
-  // 🔍 Forbidden word check
+  // 🚫 Forbidden words
   // ===============================
-  private containsForbiddenWords(
-    text: string,
-    forbiddenWords: string[],
-  ): boolean {
-    if (!forbiddenWords?.length) return false;
-    const lower = (text || '').toLowerCase();
-    return forbiddenWords.some((w) => lower.includes((w || '').toLowerCase()));
+  private containsForbiddenWords(text: string, words: string[]): boolean {
+    if (!words?.length) return false;
+    const lower = text.toLowerCase();
+    return words.some((w) => lower.includes(w.toLowerCase()));
   }
 
   // ===============================
-  // 🔧 GEMINI API CALL (Translated from OpenAI format)
+  // 🤖 GEMINI API CALL
   // ===============================
-  private async callAI(params: {
+  private async callGemini(params: {
     model: string;
     temperature: number;
     messages: ChatMessage[];
     handoffToken: string;
-  }): Promise<{ text: string; usage?: AIUsage }> {
-    // 🚨 Make sure to add this to your Railway/Render variables!
+  }): Promise<{ text: string; usage?: TokenUsage }> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY is missing');
+    if (!apiKey) throw new Error('GEMINI_API_KEY missing');
 
-    // 1. Extract all 'system' messages and merge them into Gemini's SystemInstruction
-    const systemMessages = params.messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n\n');
+    const contents = params.messages.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
 
-    // 2. Map 'user' and 'assistant' to Gemini's 'user' and 'model'
-    const contents = params.messages
-      .filter((m) => m.role !== 'system')
-      .map((m) => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-      }));
-
-    // 3. Build the Gemini Payload
-    const payload: any = {
-      contents,
-      generationConfig: {
-        temperature: params.temperature,
+    const res = await axios.post(
+      `${this.API_URL}/${params.model}:generateContent?key=${apiKey}`,
+      {
+        contents,
+        generationConfig: {
+          temperature: params.temperature,
+        },
       },
+    );
+
+    const text =
+      res.data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+      params.handoffToken;
+
+    return {
+      text: String(text).trim(),
+      usage: undefined, // Gemini doesn't return tokens (yet)
     };
-
-    if (systemMessages) {
-      payload.systemInstruction = {
-        parts: [{ text: systemMessages }],
-      };
-    }
-
-    // 4. Make the request
-    const url = `${this.GEMINI_URL}${params.model}:generateContent?key=${apiKey}`;
-
-    const response = await axios.post(url, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    // 5. Parse Gemini's specific response shape
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    const usageMetadata = response.data?.usageMetadata;
-
-    const usage: AIUsage | undefined = usageMetadata
-      ? {
-          prompt_tokens: usageMetadata.promptTokenCount,
-          completion_tokens: usageMetadata.candidatesTokenCount,
-          total_tokens: usageMetadata.totalTokenCount,
-        }
-      : undefined;
-
-    const finalText =
-      typeof text === 'string' && text.length
-        ? text.trim()
-        : params.handoffToken;
-
-    return { text: finalText, usage };
   }
 
   // ===============================
-  // 🔥 MAIN ENTRY POINT
+  // 🚀 MAIN ENTRY
   // ===============================
   async getCompletion(args: {
     company: CompanyAIConfig;
@@ -174,30 +128,28 @@ Do NOT mention advertisements unless the user explicitly asks.
     };
   }): Promise<{
     reply: string;
-    usageMain?: AIUsage;
-    usageRewrite?: AIUsage;
+    usageMain?: TokenUsage;
+    usageRewrite?: TokenUsage;
   }> {
     const { company, userText, mem } = args;
 
     const model = company.model ?? this.DEFAULT_MODEL;
-    const temperature = company.temperature ?? this.DEFAULT_TEMPERATURE;
-    const handoffToken = company.handoffToken ?? this.DEFAULT_HANDOFF_TOKEN;
-    const forbiddenWords = company.forbiddenWords ?? [];
+    const temperature = company.temperature ?? this.DEFAULT_TEMP;
+    const handoffToken = company.handoffToken ?? this.DEFAULT_HANDOFF;
+    const forbidden = company.forbiddenWords ?? [];
 
     if (!company.systemPrompt?.trim()) {
-      return { reply: handoffToken };
+      return { reply: handoffToken, usageMain: undefined };
     }
-
-    const contextMessages = this.buildContextMessages(mem);
 
     const messages: ChatMessage[] = [
       { role: 'system', content: company.systemPrompt },
-      ...contextMessages,
+      ...this.buildContextMessages(mem),
       { role: 'user', content: userText },
     ];
 
     try {
-      const main = await this.callAI({
+      const main = await this.callGemini({
         model,
         temperature,
         messages,
@@ -206,13 +158,14 @@ Do NOT mention advertisements unless the user explicitly asks.
 
       let reply = main.text;
 
+      // Never modify handoff token
       if (reply === handoffToken) {
         return { reply, usageMain: main.usage };
       }
 
-      // 🧹 Language cleanup rewrite
-      if (this.containsForbiddenWords(reply, forbiddenWords)) {
-        const rewrite = await this.callAI({
+      // rewrite if forbidden words found
+      if (this.containsForbiddenWords(reply, forbidden)) {
+        const rewrite = await this.callGemini({
           model,
           temperature: Math.min(temperature, 0.2),
           handoffToken,
@@ -221,7 +174,7 @@ Do NOT mention advertisements unless the user explicitly asks.
             {
               role: 'system',
               content:
-                'გადაწერე შემდეგი ტექსტი სრულად სუფთა და ბუნებრივ ქართულად. მნიშვნელობა არ შეცვალო. არ დაამატო ახალი ინფორმაცია. ლათინური ასოები არ გამოიყენო.',
+                'Rewrite text cleanly in Georgian. Do not change meaning. Do not add info.',
             },
             { role: 'user', content: reply },
           ],
@@ -229,20 +182,21 @@ Do NOT mention advertisements unless the user explicitly asks.
 
         reply = rewrite.text;
 
-        if (reply === handoffToken) {
-          return { reply, usageMain: main.usage, usageRewrite: rewrite.usage };
-        }
-
-        return { reply, usageMain: main.usage, usageRewrite: rewrite.usage };
+        return {
+          reply,
+          usageMain: main.usage,
+          usageRewrite: rewrite.usage,
+        };
       }
 
       return { reply, usageMain: main.usage };
     } catch (err: any) {
       console.error(
-        'Gemini API call failed:',
+        'Gemini Error:',
         err?.response?.data || err?.message || err,
       );
-      return { reply: handoffToken };
+
+      return { reply: handoffToken, usageMain: undefined };
     }
   }
 }
