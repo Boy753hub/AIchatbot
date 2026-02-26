@@ -19,7 +19,7 @@ type CompanyAIConfig = {
 @Injectable()
 export class GeminiService {
   private readonly API_URL =
-    'https://generativelanguage.googleapis.com/v1beta/models';
+    'https://generativelanguage.googleapis.com/v1beta/models/';
 
   private readonly DEFAULT_MODEL = 'gemini-2.0-flash';
   private readonly DEFAULT_TEMP = 0.4;
