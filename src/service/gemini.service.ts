@@ -21,7 +21,7 @@ export class GeminiService {
   private readonly API_URL =
     'https://generativelanguage.googleapis.com/v1beta/models';
 
-  private readonly DEFAULT_MODEL = 'gemini-1.5-flash';
+  private readonly DEFAULT_MODEL = 'gemini-2.0-flash';
   private readonly DEFAULT_TEMP = 0.4;
   private readonly DEFAULT_HANDOFF = '__HANDOFF_TO_HUMAN__';
 
