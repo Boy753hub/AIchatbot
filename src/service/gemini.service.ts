@@ -158,7 +158,8 @@ Do NOT mention ads unless asked.
     console.log(company);
     const sheetProducts = await this.getProductsPrompt(company);
 
-    const combinedSystemPrompt = [company.systemPrompt, sheetProducts]
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    const combinedSystemPrompt = [company, sheetProducts]
       .filter(Boolean)
       .join('\n\n'); // join with extra spacing
 
