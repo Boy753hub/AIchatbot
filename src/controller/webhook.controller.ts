@@ -310,6 +310,8 @@ export class WebhookController {
           temperature: company.temperature ?? 0.4,
           forbiddenWords: company.forbiddenWords ?? [],
           handoffToken: company.handoffToken ?? '__HANDOFF_TO_HUMAN__',
+          productSheetUrl: company.productSheetUrl, // << Add this
+          companyId: company.companyId, // optional but good for cache key
         },
         userText: combinedText,
         mem: {
