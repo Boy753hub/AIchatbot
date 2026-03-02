@@ -157,12 +157,9 @@ Do NOT mention ads unless asked.
     }
     const sheetProducts = await this.getProductsPrompt(company);
 
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
-    const combinedSystemPrompt = `${company.systemPrompt}\n\n${sheetProducts}`;
 
-    console.log(combinedSystemPrompt);
     const messages: ChatMessage[] = [
-      { role: 'system', content: combinedSystemPrompt },
+      { role: 'system', content: sheetProducts || company.systemPrompt },
       ...this.buildContextMessages(mem),
       { role: 'user', content: userText },
     ];
@@ -240,20 +237,22 @@ Do NOT mention ads unless asked.
         skip_empty_lines: true,
       });
 
-      const formatted = rows
-        .map((r) => {
-          return `• ${r.პროდუქტი} | ${r.ზომა} | ${r.ფასი} | ფარავს: ${r.ფარვა ?? '-'} | გარანტია: ${r.გარანტია ?? '-'}`;
-        })
+      const formattedProducts = rows
+        .map(
+          (r) =>
+            `• ${r.პროდუქტი} | ${r.ზომა} | ${r.ფასი} | ფარავს: ${r.ფარვა ?? '-'} | გარანტია: ${r.გარანტია ?? '-'}`,
+        )
         .join('\n');
 
       const text = `
-Available products:
-${formatted}
+      ${company.systemPrompt}
+პროდუქტები (ფასები / ფარადობა / გარანტია):
+${formattedProducts}
 
 Rules:
-- Only use these products
-- Never invent products
-- If product missing → say it is unavailable
+- მხოლოდ გამოიყენე ეს პროდუქტები
+- არ შექმნა ახალი პროდუქტები
+-  თუ პროდუქტი აკლია → თქვი რომ ეს პროდუქტი არ გვაქვს
 `.trim();
 
       this.productCache.set(cacheKey, {
