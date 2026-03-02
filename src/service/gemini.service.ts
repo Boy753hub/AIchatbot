@@ -158,9 +158,7 @@ Do NOT mention ads unless asked.
     const sheetProducts = await this.getProductsPrompt(company);
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
-    const combinedSystemPrompt = [company, sheetProducts]
-      .filter(Boolean)
-      .join('\n\n'); // join with extra spacing
+    const combinedSystemPrompt = `${company.systemPrompt}\n\n${sheetProducts}`;
 
     console.log(combinedSystemPrompt);
     const messages: ChatMessage[] = [
