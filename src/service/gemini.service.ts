@@ -155,7 +155,7 @@ Do NOT mention ads unless asked.
     if (!company.systemPrompt?.trim()) {
       return { reply: handoffToken, usageMain: undefined };
     }
-
+    console.log(company);
     const sheetProducts = await this.getProductsPrompt(company);
 
     const messages: ChatMessage[] = [
@@ -227,7 +227,7 @@ Do NOT mention ads unless asked.
     const cacheKey = company.companyId || company.productSheetUrl;
     const cached = this.productCache.get(cacheKey);
     const now = Date.now();
-
+    console.log("CACHE HIT", cacheKey);
     if (cached && now - cached.lastFetch < this.CACHE_TIME) {
       return cached.text;
     }
