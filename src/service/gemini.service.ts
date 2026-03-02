@@ -157,7 +157,7 @@ Do NOT mention ads unless asked.
     }
     const sheetProducts = await this.getProductsPrompt(company);
 
-
+    console.log(sheetProducts)
     const messages: ChatMessage[] = [
       { role: 'system', content: sheetProducts || company.systemPrompt },
       ...this.buildContextMessages(mem),
