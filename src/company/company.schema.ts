@@ -39,6 +39,10 @@ export class Company {
   @Prop({ default: 'gpt-4o' })
   model: string;
 
+  // sheet per company (optional)
+  @Prop()
+  productSheetUrl: string;
+
   @Prop({ default: 0.4 })
   temperature: number;
 

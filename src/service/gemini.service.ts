@@ -4,6 +4,7 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import { TokenUsage } from 'src/billing/billing.service';
+import { parse } from 'csv-parse/sync';
 
 type ChatRole = 'system' | 'user' | 'assistant';
 type ChatMessage = { role: ChatRole; content: string };
@@ -14,6 +15,8 @@ type CompanyAIConfig = {
   temperature?: number;
   handoffToken?: string;
   forbiddenWords?: string[];
+  productSheetUrl?: string;
+  companyId?: string;
 };
 
 @Injectable()
@@ -24,6 +27,8 @@ export class GeminiService {
   private readonly DEFAULT_MODEL = 'gemini-2.0-flash';
   private readonly DEFAULT_TEMP = 0.4;
   private readonly DEFAULT_HANDOFF = '__HANDOFF_TO_HUMAN__';
+  private productCache = new Map<string, { text: string; lastFetch: number }>();
+  private readonly CACHE_TIME = 1000 * 60 * 5; // 5 min
 
   // ===============================
   // 🧠 CONTEXT BUILDER
@@ -151,8 +156,13 @@ Do NOT mention ads unless asked.
       return { reply: handoffToken, usageMain: undefined };
     }
 
+    const sheetProducts = await this.getProductsPrompt(company);
+
     const messages: ChatMessage[] = [
       { role: 'system', content: company.systemPrompt },
+      ...(sheetProducts
+        ? ([{ role: 'system', content: sheetProducts }] as ChatMessage[])
+        : []),
       ...this.buildContextMessages(mem),
       { role: 'user', content: userText },
     ];
@@ -206,6 +216,59 @@ Do NOT mention ads unless asked.
       );
 
       return { reply: handoffToken, usageMain: undefined };
+    }
+  }
+
+  private async getProductsPrompt(
+    company: CompanyAIConfig & { productSheetUrl?: string; companyId?: string },
+  ): Promise<string> {
+    if (!company.productSheetUrl) return '';
+
+    const cacheKey = company.companyId || company.productSheetUrl;
+    const cached = this.productCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && now - cached.lastFetch < this.CACHE_TIME) {
+      return cached.text;
+    }
+
+    try {
+      const res = await axios.get(company.productSheetUrl);
+      const csv = res.data as string;
+
+      const rows: any[] = parse(csv, {
+        columns: true,
+        skip_empty_lines: true,
+      });
+
+      const formatted = rows
+        .map((r) => {
+          return `• ${r.პროდუქტი} | ${r.ზომა} | ${r.ფასი} | ფარავს: ${r.ფარვა ?? '-'} | გარანტია: ${r.გარანტია ?? '-'}`;
+        })
+        .join('\n');
+
+      const text = `
+Available products:
+${formatted}
+
+Rules:
+- Only use these products
+- Never invent products
+- If product missing → say it is unavailable
+`.trim();
+
+      this.productCache.set(cacheKey, {
+        text,
+        lastFetch: now,
+      });
+
+      return text;
+    } catch (err: any) {
+      console.error(
+        `Sheet fetch failed for ${company.companyId}`,
+        err?.message,
+      );
+      return '';
     }
   }
 }
