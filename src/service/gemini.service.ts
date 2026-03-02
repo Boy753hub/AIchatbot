@@ -222,12 +222,13 @@ Do NOT mention ads unless asked.
   private async getProductsPrompt(
     company: CompanyAIConfig & { productSheetUrl?: string; companyId?: string },
   ): Promise<string> {
+    console.log('URL:', company.productSheetUrl);
     if (!company.productSheetUrl) return '';
 
     const cacheKey = company.companyId || company.productSheetUrl;
     const cached = this.productCache.get(cacheKey);
     const now = Date.now();
-    console.log("CACHE HIT", cacheKey);
+    console.log('CACHE HIT', cacheKey);
     if (cached && now - cached.lastFetch < this.CACHE_TIME) {
       return cached.text;
     }
