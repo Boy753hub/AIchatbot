@@ -155,8 +155,8 @@ Do NOT mention ads unless asked.
     if (!company.systemPrompt?.trim()) {
       return { reply: handoffToken, usageMain: undefined };
     }
-    console.log(company);
     const sheetProducts = await this.getProductsPrompt(company);
+    console.log(sheetProducts);
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const combinedSystemPrompt = [company, sheetProducts]
