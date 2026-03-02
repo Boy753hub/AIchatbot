@@ -234,12 +234,14 @@ Do NOT mention ads unless asked.
 
     try {
       const res = await axios.get(company.productSheetUrl);
+      console.log(res.data);
       const csv = res.data as string;
 
       const rows: any[] = parse(csv, {
         columns: true,
         skip_empty_lines: true,
       });
+      console.log(rows);
 
       const formatted = rows
         .map((r) => {
