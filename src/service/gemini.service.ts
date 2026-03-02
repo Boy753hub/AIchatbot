@@ -158,11 +158,12 @@ Do NOT mention ads unless asked.
     console.log(company);
     const sheetProducts = await this.getProductsPrompt(company);
 
+    const combinedSystemPrompt = [company.systemPrompt, sheetProducts]
+      .filter(Boolean)
+      .join('\n\n'); // join with extra spacing
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: company.systemPrompt },
-      ...(sheetProducts
-        ? ([{ role: 'system', content: sheetProducts }] as ChatMessage[])
-        : []),
+      { role: 'system', content: combinedSystemPrompt },
       ...this.buildContextMessages(mem),
       { role: 'user', content: userText },
     ];
@@ -222,27 +223,23 @@ Do NOT mention ads unless asked.
   private async getProductsPrompt(
     company: CompanyAIConfig & { productSheetUrl?: string; companyId?: string },
   ): Promise<string> {
-    console.log('URL:', company.productSheetUrl);
     if (!company.productSheetUrl) return '';
 
     const cacheKey = company.companyId || company.productSheetUrl;
     const cached = this.productCache.get(cacheKey);
     const now = Date.now();
-    console.log('CACHE HIT', cacheKey);
     if (cached && now - cached.lastFetch < this.CACHE_TIME) {
       return cached.text;
     }
 
     try {
       const res = await axios.get(company.productSheetUrl);
-      console.log(res.data);
       const csv = res.data as string;
 
       const rows: any[] = parse(csv, {
         columns: true,
         skip_empty_lines: true,
       });
-      console.log(rows);
 
       const formatted = rows
         .map((r) => {
