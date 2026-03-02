@@ -156,13 +156,13 @@ Do NOT mention ads unless asked.
       return { reply: handoffToken, usageMain: undefined };
     }
     const sheetProducts = await this.getProductsPrompt(company);
-    console.log(sheetProducts);
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const combinedSystemPrompt = [company, sheetProducts]
       .filter(Boolean)
       .join('\n\n'); // join with extra spacing
 
+    console.log(combinedSystemPrompt);
     const messages: ChatMessage[] = [
       { role: 'system', content: combinedSystemPrompt },
       ...this.buildContextMessages(mem),
