@@ -163,8 +163,6 @@ Do NOT mention ads unless asked.
       ${sheetProducts}
       `.trim();
 
-    console.log('System Prompt:', combinedSystemPrompt);
-
     const messages: ChatMessage[] = [
       { role: 'system', content: combinedSystemPrompt },
       ...this.buildContextMessages(mem),
