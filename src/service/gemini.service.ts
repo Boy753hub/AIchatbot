@@ -157,13 +157,19 @@ Do NOT mention ads unless asked.
     }
     const sheetProducts = await this.getProductsPrompt(company);
 
-    console.log(sheetProducts)
+    const combinedSystemPrompt = `
+      ${company.systemPrompt}
+
+      ${sheetProducts}
+      `.trim();
+
+    console.log('System Prompt:', combinedSystemPrompt);
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: sheetProducts || company.systemPrompt },
+      { role: 'system', content: combinedSystemPrompt },
       ...this.buildContextMessages(mem),
       { role: 'user', content: userText },
     ];
-
     try {
       const main = await this.callGemini({
         model,
@@ -240,14 +246,14 @@ Do NOT mention ads unless asked.
       const formattedProducts = rows
         .map(
           (r) =>
-            `• ${r.პროდუქტი} | ${r.ზომა} | ${r.ფასი} | ფარავს: ${r.ფარვა ?? '-'} | გარანტია: ${r.გარანტია ?? '-'}`,
+            `• ${r.პროდუქტი} | ${r.ზომა} | ${r.ფასი} | ფარავს: ${r.ფარვა ?? '-'} | გარანტია: ${r.გარანტია ?? '-'} | მარაგშია: ${r.მარაგში}`,
         )
         .join('\n');
 
       const text = `
-      ${company.systemPrompt}
 პროდუქტები (ფასები / ფარადობა / გარანტია):
 ${formattedProducts}
+
 
 Rules:
 - მხოლოდ გამოიყენე ეს პროდუქტები
