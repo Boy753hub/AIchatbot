@@ -47,4 +47,12 @@ export class CompanyService {
       { upsert: true, new: true },
     );
   }
+
+  async updateIsActive(companyId: string, isActive: boolean) {
+    return this.companyModel.findOneAndUpdate(
+      { companyId },
+      { isActive },
+      { new: true },
+    );
+  }
 }
