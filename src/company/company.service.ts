@@ -48,6 +48,17 @@ export class CompanyService {
     );
   }
 
+  async getRawCompany(companyId: string) {
+    const company = await this.companyModel
+      .findOne({ companyId }) // No "isActive: true" here!
+      .lean();
+
+    if (!company) {
+      throw new NotFoundException(`Company ${companyId} not found`);
+    }
+
+    return company;
+  }
   async updateIsActive(companyId: string, isActive: boolean) {
     return this.companyModel.findOneAndUpdate(
       { companyId },
