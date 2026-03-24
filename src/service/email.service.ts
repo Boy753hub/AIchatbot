@@ -1,37 +1,42 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-// email.service.ts
 import { Injectable } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-  private transporter = nodemailer.createTransport({
-    host: 'smtp.zoho.eu',
-    port: 587,
-    secure: false,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    requireTLS: true,
-    connectionTimeout: 10000,
-  });
+  private resend = new Resend(process.env.RESEND_API_KEY);
 
   async sendContactEmail(data: any) {
     const { name, email, phone, message } = data;
 
-    await this.transporter.sendMail({
-      from: `"Website Lead" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER,
-      subject: 'New Contact Form Submission',
+    const toEmail = process.env.EMAIL_USER as string;
+
+    if (!toEmail) {
+      throw new Error('EMAIL_USER is not defined');
+    }
+
+    // 1. Send to YOU (lead notification)
+    await this.resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: toEmail,
+      subject: '🔥 New Lead from Website',
       html: `
-        <h3>New Lead</h3>
+        <h2>New Lead</h2>
         <p><b>Name:</b> ${name}</p>
         <p><b>Email:</b> ${email}</p>
         <p><b>Phone:</b> ${phone}</p>
-        <p><b>Message:</b> ${message}</p>
+        <p><b>Message:</b> ${message || '—'}</p>
+      `,
+    });
+
+    // 2. Auto-reply to user
+    await this.resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: email,
+      subject: 'We received your request',
+      html: `
+        <p>Hi ${name},</p>
+        <p>Thanks for reaching out. We’ll contact you shortly.</p>
       `,
     });
   }
