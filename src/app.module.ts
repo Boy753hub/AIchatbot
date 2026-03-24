@@ -10,6 +10,8 @@ import { AdModule } from './ad/ad.module';
 import { BillingModule } from './billing/billing.module';
 import { GeminiService } from './service/gemini.service';
 import { CompanyController } from './controller/company.controller';
+import { ContactController } from './controller/website.controller';
+import { EmailService } from './service/email.service';
 
 @Module({
   imports: [
@@ -25,7 +27,7 @@ import { CompanyController } from './controller/company.controller';
     NotifyModule,
     BillingModule,
   ],
-  controllers: [WebhookController, CompanyController],
-  providers: [OpenaiService, GeminiService],
+  controllers: [WebhookController, CompanyController, ContactController],
+  providers: [OpenaiService, GeminiService, EmailService],
 })
 export class AppModule {}
